@@ -8,7 +8,8 @@
     "typecheck": "tsc --noEmit",
     "lint": "eslint src",
     "ingest:wikipedia": "tsx src/commands/ingest-wikipedia.ts",
-    "score:calculate": "tsx src/commands/score-calculate.ts"
+    "score:calculate": "tsx src/commands/score-calculate.ts",
+    "expand:people": "tsx src/commands/expand-people.ts"
   },
   "dependencies": {
     "@pai/db": "workspace:*",

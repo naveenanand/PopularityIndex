@@ -1,10 +1,12 @@
 export interface ProviderRequest {
   personId: number;
   wikidataQid: string;
+  displayName?: string;
   wikipediaPageTitle?: string;
   wikipediaPageId?: number;
   languageCode?: string;
   dateRange?: { from: Date; to: Date };
+  youtubeChannelId?: string;
 }
 
 export interface RawObservation {
