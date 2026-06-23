@@ -61,7 +61,12 @@ export async function getLeaderboard(
 
   const rows = await conn
     .select({
-      person: people,
+      person: {
+        id: people.id,
+        wikidataQid: people.wikidataQid,
+        displayName: people.displayName,
+        occupationSummary: people.occupationSummary,
+      },
       score: scoreSnapshots,
     })
     .from(people)
@@ -89,7 +94,7 @@ export async function getLeaderboard(
       coverageLabel: explanation?.coverage_label ?? 'Partial coverage',
       scoreModelVersion: row.score.scoreModelVersion,
       calculatedAt: row.score.calculatedAt,
-      photoUrl: (row.person as { photoUrl?: string | null }).photoUrl ?? null,
+      photoUrl: null as string | null,
     };
   });
 }
@@ -264,7 +269,15 @@ export async function getTrendingLeaderboard(
     .as('latest_scores');
 
   const rows = await conn
-    .select({ person: people, score: scoreSnapshots })
+    .select({
+      person: {
+        id: people.id,
+        wikidataQid: people.wikidataQid,
+        displayName: people.displayName,
+        occupationSummary: people.occupationSummary,
+      },
+      score: scoreSnapshots,
+    })
     .from(people)
     .innerJoin(latestScores, eq(latestScores.personId, people.id))
     .innerJoin(
@@ -292,7 +305,7 @@ export async function getTrendingLeaderboard(
       coverageLabel: explanation?.coverage_label ?? 'Partial coverage',
       scoreModelVersion: row.score.scoreModelVersion,
       calculatedAt: row.score.calculatedAt,
-      photoUrl: (row.person as { photoUrl?: string | null }).photoUrl ?? null,
+      photoUrl: null as string | null,
     };
   });
 
