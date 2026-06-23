@@ -1,5 +1,5 @@
-import type { ScoreExplanation } from '@pai/shared';
-import { DataSourceBadge } from '../shared/DataSourceBadge.js';
+﻿import type { ScoreExplanation } from '@pai/shared';
+import { DataSourceBadge } from '../shared/DataSourceBadge';
 
 interface Props {
   explanation: ScoreExplanation;

@@ -1,4 +1,4 @@
-import { DataSourceBadge } from '../shared/DataSourceBadge.js';
+﻿import { DataSourceBadge } from '../shared/DataSourceBadge';
 
 interface Props {
   sentimentScore: number | null;

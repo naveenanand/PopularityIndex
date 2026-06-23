@@ -1,4 +1,4 @@
-'use client';
+﻿'use client';
 
 import {
   LineChart,
@@ -9,7 +9,7 @@ import {
   ResponsiveContainer,
   Legend,
 } from 'recharts';
-import { formatDate } from '../../lib/formatters.js';
+import { formatDate } from '../../lib/formatters';
 
 interface HistoryPoint {
   calculatedAt: Date | string;

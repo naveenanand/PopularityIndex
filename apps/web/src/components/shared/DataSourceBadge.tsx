@@ -1,4 +1,4 @@
-import { providerBadgeColor } from '../../lib/formatters.js';
+﻿import { providerBadgeColor } from '../../lib/formatters';
 
 interface Props {
   type: 'live' | 'mock' | 'unavailable' | 'partial';

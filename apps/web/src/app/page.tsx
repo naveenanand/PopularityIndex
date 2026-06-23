@@ -1,7 +1,7 @@
-import Link from 'next/link';
-import { getLeaderboard } from '../lib/api.js';
-import { LeaderboardTable } from '../components/leaderboard/LeaderboardTable.js';
-import { SearchBar } from '../components/shared/SearchBar.js';
+﻿import Link from 'next/link';
+import { getLeaderboard } from '../lib/api';
+import { LeaderboardTable } from '../components/leaderboard/LeaderboardTable';
+import { SearchBar } from '../components/shared/SearchBar';
 
 type SearchParams = Promise<{ sort?: string }>;
 

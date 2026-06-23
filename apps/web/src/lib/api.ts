@@ -1,7 +1,7 @@
-import { eq, desc, ilike, or, and, sql } from 'drizzle-orm';
+﻿import { eq, desc, ilike, or, and, sql } from 'drizzle-orm';
 import { people, personAliases, scoreSnapshots } from '@pai/db';
 import type { ScoreExplanation } from '@pai/shared';
-import { db } from './db.js';
+import { db } from './db';
 
 export interface LeaderboardEntry {
   rank: number;

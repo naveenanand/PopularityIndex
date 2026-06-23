@@ -1,7 +1,7 @@
-import type { Metadata } from 'next';
+﻿import type { Metadata } from 'next';
 import './globals.css';
-import { NavBar } from '../components/shared/NavBar.js';
-import { MethodologyDisclaimer } from '../components/shared/MethodologyDisclaimer.js';
+import { NavBar } from '../components/shared/NavBar';
+import { MethodologyDisclaimer } from '../components/shared/MethodologyDisclaimer';
 
 export const metadata: Metadata = {
   title: 'Public Attention Index',
