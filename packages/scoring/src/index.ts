@@ -1,0 +1,10 @@
+export { calculateScores, SCORE_MODEL_VERSION } from './engine.js';
+export type { ScoreEngineInput, ScoreEngineOutput } from './engine.js';
+export { calculatePopularityScore } from './v1/popularity.js';
+export { calculateHeatScore } from './v1/heat.js';
+export { calculateSentiment } from './v1/sentiment.js';
+export { calculateCoverage } from './v1/coverage.js';
+export { generateExplanation } from './v1/explain.js';
+export { renormalizeAndScore } from './normalizer.js';
+export type { WeightedSignal } from './normalizer.js';
+export type { CoverageResult, CoverageLabel } from './v1/coverage.js';
