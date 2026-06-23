@@ -1,5 +1,5 @@
 ﻿import { eq, desc, ilike, or, and, sql } from 'drizzle-orm';
-import { people, personAliases, scoreSnapshots } from '@pai/db';
+import { people, personAliases, scoreSnapshots, pageviewObservations, sourceObservations } from '@pai/db';
 import type { ScoreExplanation } from '@pai/shared';
 import { db } from './db';
 
@@ -149,6 +149,34 @@ export async function getPersonWithScores(wikidataQid: string): Promise<PersonWi
     },
     latestScore,
     scoreHistory,
+  };
+}
+
+export interface RawPersonObservations {
+  pageviews: Array<{ date: string; views: number }>;
+  sourceObs: Array<{ metricType: string; metricValue: number }>;
+}
+
+export async function getPersonRawObservations(personId: number): Promise<RawPersonObservations> {
+  const conn = await db();
+  if (!conn) return { pageviews: [], sourceObs: [] };
+
+  const [pvRows, obsRows] = await Promise.all([
+    conn
+      .select({ date: pageviewObservations.date, views: pageviewObservations.views })
+      .from(pageviewObservations)
+      .where(eq(pageviewObservations.personId, personId))
+      .orderBy(desc(pageviewObservations.date))
+      .limit(90),
+    conn
+      .select({ metricType: sourceObservations.metricType, metricValue: sourceObservations.metricValue })
+      .from(sourceObservations)
+      .where(eq(sourceObservations.personId, personId)),
+  ]);
+
+  return {
+    pageviews: pvRows,
+    sourceObs: obsRows,
   };
 }
 
