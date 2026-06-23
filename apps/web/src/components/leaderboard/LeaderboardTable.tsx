@@ -1,4 +1,5 @@
 import Link from 'next/link';
+import Image from 'next/image';
 import type { LeaderboardEntry } from '../../lib/api';
 import { formatScore, coverageBadgeColor } from '../../lib/formatters';
 
@@ -56,9 +57,19 @@ export function LeaderboardTable({ entries }: Props) {
               <td className="py-3 pr-4 text-gray-400 font-mono text-xs">{entry.rank}</td>
               <td className="py-3 pr-4">
                 <Link href={`/people/${entry.wikidataQid}`} className="flex items-center gap-2.5 group">
-                  <span className={`flex-shrink-0 w-8 h-8 rounded-full ${avatarColor(entry.displayName)} flex items-center justify-center text-white text-xs font-semibold`}>
-                    {initials(entry.displayName)}
-                  </span>
+                  {entry.photoUrl ? (
+                    <Image
+                      src={entry.photoUrl}
+                      alt={entry.displayName}
+                      width={32}
+                      height={32}
+                      className="flex-shrink-0 w-8 h-8 rounded-full object-cover border border-gray-200"
+                    />
+                  ) : (
+                    <span className={`flex-shrink-0 w-8 h-8 rounded-full ${avatarColor(entry.displayName)} flex items-center justify-center text-white text-xs font-semibold`}>
+                      {initials(entry.displayName)}
+                    </span>
+                  )}
                   <span>
                     <span className="font-medium text-gray-900 group-hover:text-indigo-600">
                       {entry.displayName}

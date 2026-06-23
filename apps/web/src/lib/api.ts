@@ -14,6 +14,7 @@ export interface LeaderboardEntry {
   coverageLabel: string;
   scoreModelVersion: string;
   calculatedAt: Date;
+  photoUrl: string | null;
 }
 
 export interface PersonWithScores {
@@ -75,7 +76,7 @@ export async function getLeaderboard(
     .orderBy(desc(sortCol))
     .limit(limit);
 
-  return rows.map((row, idx) => {
+  const entries = rows.map((row, idx) => {
     const explanation = row.score.explanationJson as ScoreExplanation;
     return {
       rank: idx + 1,
@@ -88,8 +89,14 @@ export async function getLeaderboard(
       coverageLabel: explanation?.coverage_label ?? 'Partial coverage',
       scoreModelVersion: row.score.scoreModelVersion,
       calculatedAt: row.score.calculatedAt,
+      photoUrl: null as string | null,
     };
   });
+
+  const photos = await Promise.all(entries.map((e) => getPersonPhoto(e.displayName)));
+  entries.forEach((e, i) => { e.photoUrl = photos[i] ?? null; });
+
+  return entries;
 }
 
 export async function getPersonWithScores(wikidataQid: string): Promise<PersonWithScores | null> {
