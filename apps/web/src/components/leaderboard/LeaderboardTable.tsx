@@ -1,6 +1,22 @@
-﻿import Link from 'next/link';
+import Link from 'next/link';
 import type { LeaderboardEntry } from '../../lib/api';
 import { formatScore, coverageBadgeColor } from '../../lib/formatters';
+
+const AVATAR_COLORS = [
+  'bg-indigo-500', 'bg-purple-500', 'bg-pink-500', 'bg-rose-500',
+  'bg-orange-500', 'bg-amber-500', 'bg-green-500', 'bg-teal-500',
+  'bg-cyan-500', 'bg-blue-500',
+];
+
+function initials(name: string): string {
+  return name.split(' ').map(w => w[0] ?? '').join('').slice(0, 2).toUpperCase();
+}
+
+function avatarColor(name: string): string {
+  let h = 0;
+  for (const c of name) h = (h * 31 + c.charCodeAt(0)) % AVATAR_COLORS.length;
+  return AVATAR_COLORS[h] ?? 'bg-indigo-500';
+}
 
 interface Props {
   entries: LeaderboardEntry[];
@@ -39,17 +55,30 @@ export function LeaderboardTable({ entries }: Props) {
             <tr key={entry.wikidataQid} className="hover:bg-gray-50 transition-colors">
               <td className="py-3 pr-4 text-gray-400 font-mono text-xs">{entry.rank}</td>
               <td className="py-3 pr-4">
-                <Link
-                  href={`/people/${entry.wikidataQid}`}
-                  className="font-medium text-gray-900 hover:text-indigo-600"
-                >
-                  {entry.displayName}
+                <Link href={`/people/${entry.wikidataQid}`} className="flex items-center gap-2.5 group">
+                  {entry.photoUrl ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img
+                      src={entry.photoUrl}
+                      alt={entry.displayName}
+                      className="flex-shrink-0 w-8 h-8 rounded-full object-cover border border-gray-200"
+                    />
+                  ) : (
+                    <span className={`flex-shrink-0 w-8 h-8 rounded-full ${avatarColor(entry.displayName)} flex items-center justify-center text-white text-xs font-semibold`}>
+                      {initials(entry.displayName)}
+                    </span>
+                  )}
+                  <span>
+                    <span className="font-medium text-gray-900 group-hover:text-indigo-600">
+                      {entry.displayName}
+                    </span>
+                    {entry.occupationSummary && (
+                      <div className="text-xs text-gray-400 capitalize mt-0.5">
+                        {entry.occupationSummary.replace(/_/g, ' ')}
+                      </div>
+                    )}
+                  </span>
                 </Link>
-                {entry.occupationSummary && (
-                  <div className="text-xs text-gray-400 capitalize mt-0.5">
-                    {entry.occupationSummary.replace(/_/g, ' ')}
-                  </div>
-                )}
               </td>
               <td className="py-3 pr-4 text-right">
                 <span className="text-lg font-bold text-indigo-600">
@@ -62,9 +91,7 @@ export function LeaderboardTable({ entries }: Props) {
                 </span>
               </td>
               <td className="py-3">
-                <span
-                  className={`inline-block px-2 py-0.5 rounded-full text-xs border ${coverageBadgeColor(entry.coverageLabel)}`}
-                >
+                <span className={`inline-block px-2 py-0.5 rounded-full text-xs border ${coverageBadgeColor(entry.coverageLabel)}`}>
                   {entry.coverageLabel}
                 </span>
               </td>

@@ -1,6 +1,10 @@
 export { WikidataProvider } from './wikidata/wikidata.provider.js';
 export { WikipediaPageviewsProvider } from './wikipedia/pageviews.provider.js';
 export { WikipediaMetadataProvider } from './wikipedia/metadata.provider.js';
+export { GDELTNewsProvider } from './news/gdelt.provider.js';
+export { RedditConversationProvider } from './social/reddit.provider.js';
+export { YouTubeSocialProvider } from './social/youtube.provider.js';
+export { WikipediaTrendingProvider } from './trends/wikipedia-trending.provider.js';
 export { MockSearchInterestProvider } from './mocks/search-interest.mock.js';
 export { MockNewsCoverageProvider } from './mocks/news-coverage.mock.js';
 export { MockSocialReachProvider } from './mocks/social-reach.mock.js';

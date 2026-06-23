@@ -63,6 +63,9 @@ export function buildScoringFeatures(
       case 'search_spike':
         features.searchSpike = obs.metricValue;
         break;
+      case 'news_article_count_24h':
+        features.newsCoverageVolume24h = obs.metricValue;
+        break;
       case 'news_article_count_7d':
         features.newsCoverageVolume7d = obs.metricValue;
         break;

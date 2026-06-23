@@ -14,6 +14,7 @@ export interface LeaderboardEntry {
   coverageLabel: string;
   scoreModelVersion: string;
   calculatedAt: Date;
+  photoUrl: string | null;
 }
 
 export interface PersonWithScores {
@@ -75,7 +76,7 @@ export async function getLeaderboard(
     .orderBy(desc(sortCol))
     .limit(limit);
 
-  return rows.map((row, idx) => {
+  const entries = rows.map((row, idx) => {
     const explanation = row.score.explanationJson as ScoreExplanation;
     return {
       rank: idx + 1,
@@ -88,8 +89,14 @@ export async function getLeaderboard(
       coverageLabel: explanation?.coverage_label ?? 'Partial coverage',
       scoreModelVersion: row.score.scoreModelVersion,
       calculatedAt: row.score.calculatedAt,
+      photoUrl: null as string | null,
     };
   });
+
+  const photos = await Promise.all(entries.map((e) => getPersonPhoto(e.displayName)));
+  entries.forEach((e, i) => { e.photoUrl = photos[i] ?? null; });
+
+  return entries;
 }
 
 export async function getPersonWithScores(wikidataQid: string): Promise<PersonWithScores | null> {
@@ -167,4 +174,50 @@ export async function searchPeople(query: string) {
     .limit(20);
 
   return rows.map((r) => r.person);
+}
+
+const WIKIMEDIA_UA = process.env['WIKIMEDIA_USER_AGENT'] ?? 'PopularityIndex/0.1.0';
+
+export async function getPersonPhoto(displayName: string): Promise<string | null> {
+  const title = encodeURIComponent(displayName.replace(/ /g, '_'));
+  try {
+    const res = await fetch(`https://en.wikipedia.org/api/rest_v1/page/summary/${title}`, {
+      headers: { 'User-Agent': WIKIMEDIA_UA },
+      signal: AbortSignal.timeout(5000),
+      next: { revalidate: 86400 },
+    });
+    if (!res.ok) return null;
+    const data = (await res.json()) as { thumbnail?: { source: string } };
+    return data.thumbnail?.source ?? null;
+  } catch {
+    return null;
+  }
+}
+
+export interface NewsArticle {
+  title: string;
+  url: string;
+  domain: string;
+  seendate: string;
+}
+
+export async function getPersonTopArticles(displayName: string): Promise<NewsArticle[]> {
+  const params = new URLSearchParams({
+    query: `"${displayName}"`,
+    mode: 'artlist',
+    maxrecords: '3',
+    format: 'json',
+    timespan: '7d',
+    sort: 'DateDesc',
+  });
+  try {
+    const res = await fetch(`https://api.gdeltproject.org/api/v2/doc/doc?${params}`, {
+      next: { revalidate: 3600 },
+    });
+    if (!res.ok) return [];
+    const data = (await res.json()) as { articles?: NewsArticle[] };
+    return data.articles?.slice(0, 3) ?? [];
+  } catch {
+    return [];
+  }
 }

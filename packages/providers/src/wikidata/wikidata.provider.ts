@@ -9,6 +9,7 @@ interface SparqlResult {
       sitelinks?: { value: string };
       birthDate?: { value: string };
       occupationLabel?: { value: string };
+      youtubeChannelId?: { value: string };
     }>;
   };
 }
@@ -20,7 +21,7 @@ export class WikidataProvider implements AttentionProvider {
   async getObservations(input: ProviderRequest): Promise<ProviderResult> {
     const qid = input.wikidataQid;
     const query = `
-      SELECT ?sitelinks ?birthDate ?occupationLabel WHERE {
+      SELECT ?sitelinks ?birthDate ?occupationLabel ?youtubeChannelId WHERE {
         BIND(wd:${qid} AS ?person)
         OPTIONAL { ?person wikibase:sitelinks ?sitelinks }
         OPTIONAL { ?person wdt:P569 ?birthDate }
@@ -28,6 +29,7 @@ export class WikidataProvider implements AttentionProvider {
           ?person wdt:P106 ?occupation .
           SERVICE wikibase:label { bd:serviceParam wikibase:language "en" }
         }
+        OPTIONAL { ?person wdt:P2397 ?youtubeChannelId }
       }
       LIMIT 1
     `;
@@ -60,6 +62,16 @@ export class WikidataProvider implements AttentionProvider {
             reliabilityScore: 0.98,
           });
         }
+      }
+
+      if (binding?.youtubeChannelId) {
+        observations.push({
+          metricType: 'youtube_channel_id',
+          metricValue: 0,
+          observedAt: now,
+          payload: { channelId: binding.youtubeChannelId.value, qid },
+          reliabilityScore: 0.95,
+        });
       }
 
       return {
