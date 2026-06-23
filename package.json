@@ -16,7 +16,8 @@
     "db:seed": "pnpm --filter @pai/db seed",
     "ingest:wikipedia": "pnpm --filter @pai/worker ingest:wikipedia",
     "score:calculate": "pnpm --filter @pai/worker score:calculate",
-    "expand:people": "pnpm --filter @pai/worker expand:people"
+    "expand:people": "pnpm --filter @pai/worker expand:people",
+    "update:photos": "pnpm --filter @pai/worker update:photos"
   },
   "devDependencies": {
     "@typescript-eslint/eslint-plugin": "^8.33.0",

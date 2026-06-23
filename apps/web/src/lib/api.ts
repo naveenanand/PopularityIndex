@@ -76,7 +76,7 @@ export async function getLeaderboard(
     .orderBy(desc(sortCol))
     .limit(limit);
 
-  const entries = rows.map((row, idx) => {
+  return rows.map((row, idx) => {
     const explanation = row.score.explanationJson as ScoreExplanation;
     return {
       rank: idx + 1,
@@ -89,14 +89,9 @@ export async function getLeaderboard(
       coverageLabel: explanation?.coverage_label ?? 'Partial coverage',
       scoreModelVersion: row.score.scoreModelVersion,
       calculatedAt: row.score.calculatedAt,
-      photoUrl: null as string | null,
+      photoUrl: (row.person as { photoUrl?: string | null }).photoUrl ?? null,
     };
   });
-
-  const photos = await Promise.all(entries.map((e) => getPersonPhoto(e.displayName)));
-  entries.forEach((e, i) => { e.photoUrl = photos[i] ?? null; });
-
-  return entries;
 }
 
 export async function getPersonWithScores(wikidataQid: string): Promise<PersonWithScores | null> {
@@ -255,9 +250,51 @@ export async function getTrendingLeaderboard(
   timespan: '1h' | '24h' | '30d',
   limit = 50,
 ): Promise<TrendingEntry[]> {
-  // Pull top 200 by popularity from DB (most likely to actually trend)
-  const base = await getLeaderboard('popularity', 200);
-  if (base.length === 0) return [];
+  // Lean DB query — no photo fetches, no external API calls in this step
+  const conn = await db();
+  if (!conn) return [];
+
+  const latestScores = conn
+    .select({
+      personId: scoreSnapshots.personId,
+      maxCalcAt: sql<string>`max(${scoreSnapshots.calculatedAt})`.as('max_calc_at'),
+    })
+    .from(scoreSnapshots)
+    .groupBy(scoreSnapshots.personId)
+    .as('latest_scores');
+
+  const rows = await conn
+    .select({ person: people, score: scoreSnapshots })
+    .from(people)
+    .innerJoin(latestScores, eq(latestScores.personId, people.id))
+    .innerJoin(
+      scoreSnapshots,
+      and(
+        eq(scoreSnapshots.personId, people.id),
+        eq(scoreSnapshots.calculatedAt, sql`${latestScores.maxCalcAt}`),
+      ),
+    )
+    .orderBy(desc(scoreSnapshots.popularityScore))
+    .limit(200);
+
+  if (rows.length === 0) return [];
+
+  const base: LeaderboardEntry[] = rows.map((row, idx) => {
+    const explanation = row.score.explanationJson as ScoreExplanation;
+    return {
+      rank: idx + 1,
+      wikidataQid: row.person.wikidataQid,
+      displayName: row.person.displayName,
+      occupationSummary: row.person.occupationSummary,
+      popularityScore: row.score.popularityScore,
+      heatScore: row.score.heatScore,
+      coverageScore: row.score.coverageScore,
+      coverageLabel: explanation?.coverage_label ?? 'Partial coverage',
+      scoreModelVersion: row.score.scoreModelVersion,
+      calculatedAt: row.score.calculatedAt,
+      photoUrl: (row.person as { photoUrl?: string | null }).photoUrl ?? null,
+    };
+  });
 
   // Fetch GDELT counts in batches of 8 to stay within timeout budgets
   const BATCH = 8;

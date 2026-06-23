@@ -16,6 +16,7 @@ export const people = pgTable('people', {
   normalizedName: text('normalized_name').notNull(),
   dateOfBirth: text('date_of_birth'),
   occupationSummary: text('occupation_summary'),
+  photoUrl: text('photo_url'),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
 });

@@ -1,4 +1,4 @@
-export const revalidate = 300; // 5 min — covers the trending tabs' live GDELT queries
+export const revalidate = 60; // 1 min — DB-only for regular tabs, 5 min is fine for trending (no photo overhead)
 
 import Link from 'next/link';
 import { getLeaderboard, getTrendingLeaderboard } from '../lib/api';

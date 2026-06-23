@@ -35,6 +35,21 @@ OFFSET ${offset}
 `.trim();
 }
 
+async function fetchPhotoUrl(displayName: string): Promise<string | undefined> {
+  const title = encodeURIComponent(displayName.replace(/ /g, '_'));
+  try {
+    const res = await fetch(`https://en.wikipedia.org/api/rest_v1/page/summary/${title}`, {
+      headers: { 'User-Agent': USER_AGENT },
+      signal: AbortSignal.timeout(5_000),
+    });
+    if (!res.ok) return undefined;
+    const data = (await res.json()) as { thumbnail?: { source: string } };
+    return data.thumbnail?.source ?? undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 async function fetchPage(offset: number): Promise<Array<{ wikidataQid: string; displayName: string; occupation?: string }>> {
   const query = buildQuery(offset);
   const url = `${SPARQL_BASE}/sparql?query=${encodeURIComponent(query)}&format=json`;
@@ -85,11 +100,13 @@ export async function runExpandPeopleJob(startOffset = 0): Promise<void> {
         const batch = candidates.slice(i, i + BATCH_SIZE);
         await Promise.all(batch.map(async p => {
           try {
+            const photoUrl = await fetchPhotoUrl(p.displayName);
             await peopleRepo.upsertFromWikidata({
               wikidataQid: p.wikidataQid,
               displayName: p.displayName,
               normalizedName: p.displayName.toLowerCase(),
               ...(p.occupation ? { occupationSummary: p.occupation } : {}),
+              ...(photoUrl ? { photoUrl } : {}),
             });
             added++;
           } catch {
