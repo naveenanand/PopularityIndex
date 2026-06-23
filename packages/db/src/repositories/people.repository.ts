@@ -8,6 +8,7 @@ export interface UpsertPersonData {
   normalizedName: string;
   dateOfBirth?: string;
   occupationSummary?: string;
+  photoUrl?: string;
   wikipediaPageTitle?: string;
 }
 
@@ -50,6 +51,7 @@ export function makePeopleRepository(db: Db) {
           normalizedName: data.normalizedName,
           dateOfBirth: data.dateOfBirth,
           occupationSummary: data.occupationSummary,
+          ...(data.photoUrl !== undefined ? { photoUrl: data.photoUrl } : {}),
           updatedAt: new Date(),
         })
         .onConflictDoUpdate({
@@ -59,6 +61,7 @@ export function makePeopleRepository(db: Db) {
             normalizedName: data.normalizedName,
             dateOfBirth: data.dateOfBirth,
             occupationSummary: data.occupationSummary,
+            ...(data.photoUrl !== undefined ? { photoUrl: data.photoUrl } : {}),
             updatedAt: new Date(),
           },
         })

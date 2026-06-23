@@ -9,7 +9,8 @@
     "lint": "eslint src",
     "ingest:wikipedia": "tsx src/commands/ingest-wikipedia.ts",
     "score:calculate": "tsx src/commands/score-calculate.ts",
-    "expand:people": "tsx src/commands/expand-people.ts"
+    "expand:people": "tsx src/commands/expand-people.ts",
+    "update:photos": "tsx src/commands/update-photos.ts"
   },
   "dependencies": {
     "@pai/db": "workspace:*",

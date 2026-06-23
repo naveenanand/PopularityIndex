@@ -46,6 +46,14 @@ jobs:
           WIKIMEDIA_USER_AGENT: PopularityIndex/0.1.0 (naveenanand.87@gmail.com)
           NODE_ENV: production
 
+      - name: Update missing photo URLs (500 per run)
+        run: pnpm update:photos 500
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          WIKIMEDIA_USER_AGENT: PopularityIndex/0.1.0 (naveenanand.87@gmail.com)
+          NODE_ENV: production
+        continue-on-error: true
+
   expand-people:
     runs-on: ubuntu-latest
     timeout-minutes: 20
