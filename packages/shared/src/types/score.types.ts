@@ -14,6 +14,7 @@ export interface ScoringFeatures {
   searchSpike?: number;
 
   // News coverage (mock/future)
+  newsCoverageVolume24h?: number;
   newsCoverageVolume7d?: number;
   newsSourceDiversity?: number;
   newsVelocity?: number;

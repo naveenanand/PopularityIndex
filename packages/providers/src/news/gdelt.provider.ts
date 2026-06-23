@@ -92,23 +92,27 @@ export class GDELTNewsProvider implements AttentionProvider {
     }
 
     try {
-      const [articles7d, articles30d] = await Promise.all([
+      const [articles24h, articles7d, articles30d] = await Promise.all([
+        fetchArticles(name, '24h'),
         fetchArticles(name, '7d'),
         fetchArticles(name, '30d'),
       ]);
 
+      const count24h = articles24h.length;
       const count7d = articles7d.length;
       const count30d = Math.max(count7d, articles30d.length);
       const uniqueDomains = new Set(articles7d.map(a => a.domain)).size;
       const sourceDiversity = count7d > 0 ? Math.min(1, (uniqueDomains / count7d) * 3) : 0;
-      const rate7d = count7d / 7;
-      const rate30d = count30d / 30;
-      const velocity = rate30d > 0 ? rate7d / rate30d : 1.0;
+
+      // Velocity: today's rate vs 7-day daily average — detects spikes within last 24h
+      const dailyRate7d = count7d / 7;
+      const velocity = dailyRate7d > 0 ? count24h / dailyRate7d : count24h > 0 ? 5.0 : 1.0;
 
       const observations: RawObservation[] = [
+        { metricType: 'news_article_count_24h', metricValue: count24h, observedAt: now, payload: { provider: 'gdelt', query: name }, reliabilityScore: 0.75 },
         { metricType: 'news_article_count_7d', metricValue: count7d, observedAt: now, payload: { provider: 'gdelt', query: name }, reliabilityScore: 0.75 },
         { metricType: 'news_source_diversity', metricValue: sourceDiversity, observedAt: now, payload: { provider: 'gdelt', uniqueDomains }, reliabilityScore: 0.75 },
-        { metricType: 'news_velocity', metricValue: velocity, observedAt: now, payload: { provider: 'gdelt' }, reliabilityScore: 0.7 },
+        { metricType: 'news_velocity', metricValue: velocity, observedAt: now, payload: { provider: 'gdelt', count24h, count7d }, reliabilityScore: 0.7 },
       ];
 
       const headlines = articles7d.filter(a => !a.language || a.language === 'English').map(a => a.title).filter(Boolean);
