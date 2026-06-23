@@ -247,15 +247,22 @@ export interface TrendingEntry extends LeaderboardEntry {
   articleCount: number;
 }
 
+const GDELT_TIMESPAN: Record<string, string> = {
+  '1h': '60',      // GDELT uses minutes
+  '24h': '1440',
+  '30d': '43200',
+};
+
 async function fetchGDELTCount(name: string, timespan: string): Promise<number> {
+  const gdeltTimespan = GDELT_TIMESPAN[timespan] ?? timespan;
   const params = new URLSearchParams({
-    query: `"${name}"`, mode: 'artlist', maxrecords: '50',
-    format: 'json', timespan, sort: 'DateDesc',
+    query: `"${name}"`, mode: 'artlist', maxrecords: '75',
+    format: 'json', timespan: gdeltTimespan, sort: 'DateDesc',
   });
   try {
     const res = await fetch(`https://api.gdeltproject.org/api/v2/doc/doc?${params}`, {
       headers: { 'User-Agent': WIKIMEDIA_UA },
-      signal: AbortSignal.timeout(5_000),
+      signal: AbortSignal.timeout(12_000),
     });
     if (!res.ok) return 0;
     const data = (await res.json()) as { articles?: unknown[] };
@@ -306,8 +313,8 @@ export async function getTrendingLeaderboard(
 
   if (rows.length === 0) return [];
 
-  // Take top 30 by popularity — enough to surface trending people without timeouts
-  const base: LeaderboardEntry[] = rows.slice(0, 30).map((row, idx) => {
+  // Top 10 by popularity — 10 parallel calls stay under 8s timeout (Vercel Hobby limit)
+  const base: LeaderboardEntry[] = rows.slice(0, 10).map((row, idx) => {
     const explanation = row.score.explanationJson as ScoreExplanation;
     return {
       rank: idx + 1,
@@ -324,7 +331,7 @@ export async function getTrendingLeaderboard(
     };
   });
 
-  // Fetch all GDELT counts in parallel — 30 calls with 5s timeout each
+  // 10 parallel GDELT calls — all resolve within the 8s timeout window
   const results = await Promise.all(
     base.map(e => fetchGDELTCount(e.displayName, timespan).then(n => ({ qid: e.wikidataQid, n }))),
   );
