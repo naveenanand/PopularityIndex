@@ -16,7 +16,7 @@ export function DataSourceBadge({ type, label }: Props) {
   const colorClass =
     type === 'partial'
       ? 'bg-blue-100 text-blue-800 border-blue-200'
-      : providerBadgeColor(type === 'partial' ? 'unavailable' : type);
+      : providerBadgeColor(type);
 
   return (
     <span
