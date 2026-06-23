@@ -2,19 +2,22 @@ import Link from 'next/link';
 import type { TrendingEntry } from '../../lib/api';
 
 const AVATAR_COLORS = [
-  'bg-indigo-500', 'bg-purple-500', 'bg-pink-500', 'bg-rose-500',
-  'bg-orange-500', 'bg-amber-500', 'bg-green-500', 'bg-teal-500',
-  'bg-cyan-500', 'bg-blue-500',
+  'from-indigo-700 to-purple-800',
+  'from-rose-700 to-red-900',
+  'from-amber-600 to-orange-800',
+  'from-emerald-700 to-teal-900',
+  'from-sky-700 to-blue-900',
+  'from-violet-700 to-purple-900',
 ];
+
+function avatarGradient(name: string): string {
+  let h = 0;
+  for (const c of name) h = (h * 31 + c.charCodeAt(0)) % AVATAR_COLORS.length;
+  return AVATAR_COLORS[h] ?? 'from-zinc-700 to-zinc-800';
+}
 
 function initials(name: string): string {
   return name.split(' ').map(w => w[0] ?? '').join('').slice(0, 2).toUpperCase();
-}
-
-function avatarColor(name: string): string {
-  let h = 0;
-  for (const c of name) h = (h * 31 + c.charCodeAt(0)) % AVATAR_COLORS.length;
-  return AVATAR_COLORS[h] ?? 'bg-indigo-500';
 }
 
 const PERIOD_LABEL: Record<string, string> = {
@@ -34,9 +37,9 @@ export function TrendingTable({ entries, timespan }: Props) {
       ? 'The 1-hour window is very narrow — try Last 24h or Last 30d for results.'
       : 'GDELT data may be loading. Refresh in a moment or try a wider time window.';
     return (
-      <div className="text-center py-16 text-gray-500">
-        <p className="text-lg font-medium">No articles found in the {PERIOD_LABEL[timespan] ?? timespan}</p>
-        <p className="text-sm mt-2 text-gray-400">{hint}</p>
+      <div className="text-center py-20 text-zinc-600">
+        <p className="text-lg font-medium text-zinc-400">No articles found in the {PERIOD_LABEL[timespan] ?? timespan}</p>
+        <p className="text-sm mt-2 text-zinc-600">{hint}</p>
       </div>
     );
   }
@@ -47,53 +50,49 @@ export function TrendingTable({ entries, timespan }: Props) {
     <div className="overflow-x-auto">
       <table className="w-full text-sm">
         <thead>
-          <tr className="border-b border-gray-200 text-left text-xs text-gray-500 uppercase tracking-wide">
-            <th className="pb-3 pr-4 w-10">#</th>
-            <th className="pb-3 pr-4">Name</th>
+          <tr className="border-b border-zinc-800 text-left text-xs text-zinc-600 uppercase tracking-wide">
+            <th className="pb-3 pl-5 pr-4 w-10">#</th>
+            <th className="pb-3 pr-4 py-4">Name</th>
             <th className="pb-3 pr-4 text-right">Articles ({PERIOD_LABEL[timespan]})</th>
-            <th className="pb-3 text-right">Popularity</th>
+            <th className="pb-3 pr-5 text-right">Popularity</th>
           </tr>
         </thead>
-        <tbody className="divide-y divide-gray-100">
+        <tbody className="divide-y divide-zinc-800/60">
           {active.map((entry, idx) => (
-            <tr key={entry.wikidataQid} className="hover:bg-gray-50 transition-colors">
-              <td className="py-3 pr-4 text-gray-400 font-mono text-xs">{idx + 1}</td>
+            <tr key={entry.wikidataQid} className="hover:bg-zinc-800/50 transition-colors group">
+              <td className="py-3 pl-5 pr-4 text-zinc-600 font-mono text-xs">{idx + 1}</td>
               <td className="py-3 pr-4">
-                <Link href={`/people/${entry.wikidataQid}`} className="flex items-center gap-2.5 group">
+                <Link href={`/people/${entry.wikidataQid}`} className="flex items-center gap-3">
                   {entry.photoUrl ? (
                     <img
                       src={entry.photoUrl}
                       alt={entry.displayName}
-                      className="flex-shrink-0 w-8 h-8 rounded-full object-cover border border-gray-200"
+                      className="flex-shrink-0 w-9 h-9 rounded-full object-cover object-top border border-zinc-700"
                     />
                   ) : (
-                    <span className={`flex-shrink-0 w-8 h-8 rounded-full ${avatarColor(entry.displayName)} flex items-center justify-center text-white text-xs font-semibold`}>
+                    <div className={`flex-shrink-0 w-9 h-9 rounded-full bg-gradient-to-br ${avatarGradient(entry.displayName)} flex items-center justify-center text-white/80 text-xs font-bold`}>
                       {initials(entry.displayName)}
-                    </span>
+                    </div>
                   )}
                   <span>
-                    <span className="font-medium text-gray-900 group-hover:text-indigo-600">
-                      {entry.displayName}
-                    </span>
+                    <span className="font-semibold text-zinc-100 group-hover:text-white">{entry.displayName}</span>
                     {entry.occupationSummary && (
-                      <div className="text-xs text-gray-400 capitalize mt-0.5">
-                        {entry.occupationSummary.replace(/_/g, ' ')}
-                      </div>
+                      <div className="text-xs text-zinc-600 capitalize mt-0.5">{entry.occupationSummary.replace(/_/g, ' ')}</div>
                     )}
                   </span>
                 </Link>
               </td>
               <td className="py-3 pr-4 text-right">
-                <span className="text-lg font-bold text-rose-500">{entry.articleCount}</span>
+                <span className="text-lg font-bold text-red-400">{entry.articleCount}</span>
               </td>
-              <td className="py-3 text-right">
-                <span className="text-sm font-semibold text-indigo-600">{Math.round(entry.popularityScore)}</span>
+              <td className="py-3 pr-5 text-right">
+                <span className="text-sm font-semibold text-amber-400">{Math.round(entry.popularityScore)}</span>
               </td>
             </tr>
           ))}
         </tbody>
       </table>
-      <p className="text-[10px] text-gray-300 mt-4">Source: GDELT Project · {active.length} people with coverage in {PERIOD_LABEL[timespan]}</p>
+      <p className="text-[10px] text-zinc-700 px-5 py-3">Source: GDELT Project · {active.length} people with coverage in {PERIOD_LABEL[timespan]}</p>
     </div>
   );
 }

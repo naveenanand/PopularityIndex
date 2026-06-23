@@ -20,96 +20,107 @@ export default async function PersonPage({ params }: PageProps) {
   if (!data) return notFound();
 
   const { person, scoreHistory } = data;
-
-  // Photo comes from DB (fast) if the expand-people job has populated it,
-  // otherwise falls back to a Wikipedia API call (still faster than blocking scores)
   const photoUrl = await getPersonPhoto(person.displayName);
+  const occupation = person.occupationSummary?.replace(/_/g, ' ') ?? '';
 
   return (
-    <div className="space-y-6 max-w-3xl mx-auto">
-      {/* Header — renders immediately from DB */}
-      <div className="flex items-start justify-between flex-wrap gap-4">
-        <div className="flex items-center gap-4">
+    <div className="min-h-screen">
+      {/* Hero banner */}
+      <div className="relative h-48 sm:h-64 overflow-hidden">
+        {photoUrl ? (
+          <img src={photoUrl} alt={person.displayName} className="absolute inset-0 w-full h-full object-cover object-top" />
+        ) : (
+          <div className="absolute inset-0 bg-gradient-to-br from-zinc-800 to-zinc-950" />
+        )}
+        <div className="absolute inset-0 bg-gradient-to-t from-[#0a0a0a] via-[#0a0a0a]/60 to-transparent" />
+        <div className="absolute inset-0 bg-gradient-to-r from-[#0a0a0a]/80 to-transparent" />
+      </div>
+
+      {/* Content — overlaps the hero */}
+      <div className="max-w-3xl mx-auto px-4 sm:px-6 -mt-24 relative z-10 space-y-6 pb-16">
+
+        {/* Person header card */}
+        <div className="flex items-end gap-5">
+          {/* Avatar */}
           {photoUrl ? (
             <img
               src={photoUrl}
               alt={person.displayName}
-              className="rounded-full object-cover w-16 h-16 border border-gray-200 shadow-sm flex-shrink-0"
+              className="w-20 h-20 sm:w-24 sm:h-24 rounded-full object-cover object-top border-4 border-[#0a0a0a] flex-shrink-0 shadow-xl"
             />
           ) : (
-            <div className="w-16 h-16 rounded-full bg-indigo-100 flex items-center justify-center text-indigo-600 font-bold text-2xl flex-shrink-0">
+            <div className="w-20 h-20 sm:w-24 sm:h-24 rounded-full bg-zinc-700 border-4 border-[#0a0a0a] flex items-center justify-center text-zinc-300 font-black text-3xl flex-shrink-0 shadow-xl">
               {person.displayName.charAt(0)}
             </div>
           )}
-          <div>
-            <h1 className="text-2xl font-bold text-gray-900">{person.displayName}</h1>
-            {person.occupationSummary && (
-              <p className="text-gray-500 text-sm mt-0.5 capitalize">
-                {person.occupationSummary.replace(/_/g, ' ')}
-              </p>
+
+          <div className="pb-1 min-w-0">
+            <h1 className="text-2xl sm:text-3xl font-black text-white leading-tight">{person.displayName}</h1>
+            {occupation && (
+              <p className="text-zinc-400 text-sm capitalize mt-0.5">{occupation}</p>
             )}
-            <div className="flex items-center gap-3 mt-2">
-              <span className="text-xs font-mono text-gray-400 bg-gray-100 px-2 py-0.5 rounded">
+            <div className="flex items-center gap-2 mt-2 flex-wrap">
+              <span className="text-[10px] font-mono text-zinc-600 bg-zinc-800 px-2 py-0.5 rounded">
                 {person.wikidataQid}
               </span>
               <a
                 href={`https://en.wikipedia.org/wiki/${encodeURIComponent(person.displayName.replace(/ /g, '_'))}`}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="text-xs text-indigo-600 hover:underline"
+                className="text-xs text-red-400 hover:text-red-300 transition-colors"
               >
                 Wikipedia →
               </a>
             </div>
           </div>
-        </div>
-        <div className="flex flex-col items-end gap-1">
-          <Link href="/" className="text-sm text-gray-400 hover:text-gray-600">
-            ← Leaderboard
-          </Link>
-          <span className="text-[10px] text-gray-300">Live · refreshes every 60s</span>
-        </div>
-      </div>
 
-      {/* Live scores + articles — streams in while page is already visible */}
-      <Suspense fallback={<LiveScoreSkeleton />}>
-        <LiveScoreSection personId={person.id} displayName={person.displayName} />
-      </Suspense>
-
-      {/* Score history — from DB, renders with the header */}
-      <div className="bg-white rounded-xl border border-gray-200 p-6 shadow-sm">
-        <div className="flex items-center justify-between mb-4">
-          <h2 className="font-semibold text-gray-900">Score history</h2>
-          <span className="text-xs text-gray-400">
-            {scoreHistory[0] ? `Last snapshot ${formatDate(scoreHistory[0].calculatedAt)}` : 'No history yet'}
-          </span>
+          <div className="ml-auto flex-shrink-0 pb-1">
+            <Link href="/" className="text-sm text-zinc-600 hover:text-zinc-400 transition-colors">
+              ← Back
+            </Link>
+          </div>
         </div>
-        <ScoreHistoryChart history={scoreHistory} />
-      </div>
 
-      {/* Data sources */}
-      <div className="bg-white rounded-xl border border-gray-200 p-6 shadow-sm space-y-3">
-        <h2 className="font-semibold text-gray-900 text-sm">Data sources</h2>
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-sm">
-          {[
-            { name: 'Wikipedia pageviews', type: 'live' as const },
-            { name: 'Wikidata sitelinks', type: 'live' as const },
-            { name: 'Wikipedia metadata', type: 'live' as const },
-            { name: 'Search interest (Wikipedia top articles)', type: 'live' as const },
-            { name: 'News coverage (GDELT)', type: 'live' as const },
-            { name: 'Sentiment (GDELT headlines)', type: 'live' as const },
-            { name: 'YouTube social reach', type: 'live' as const },
-            { name: 'Reddit conversation', type: 'partial' as const },
-          ].map((source) => (
-            <div key={source.name} className="flex items-center justify-between border-b border-gray-100 pb-1.5">
-              <span className="text-gray-700">{source.name}</span>
-              <DataSourceBadge type={source.type} />
-            </div>
-          ))}
+        {/* Live scores — streams in while page is visible */}
+        <Suspense fallback={<LiveScoreSkeleton />}>
+          <LiveScoreSection personId={person.id} displayName={person.displayName} />
+        </Suspense>
+
+        {/* Score history */}
+        <div className="bg-zinc-900 rounded-2xl border border-zinc-800 p-6">
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="font-bold text-white">Score History</h2>
+            <span className="text-xs text-zinc-600">
+              {scoreHistory[0] ? `Last snapshot ${formatDate(scoreHistory[0].calculatedAt)}` : 'No history yet'}
+            </span>
+          </div>
+          <ScoreHistoryChart history={scoreHistory} />
         </div>
-        <p className="text-xs text-gray-400 mt-2">
-          Scores computed live on each visit. Reddit requires API credentials to be configured.
-        </p>
+
+        {/* Data sources */}
+        <div className="bg-zinc-900 rounded-2xl border border-zinc-800 p-6 space-y-3">
+          <h2 className="font-bold text-white text-sm">Data Sources</h2>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-sm">
+            {[
+              { name: 'Wikipedia pageviews', type: 'live' as const },
+              { name: 'Wikidata sitelinks', type: 'live' as const },
+              { name: 'Wikipedia metadata', type: 'live' as const },
+              { name: 'Search interest (Wikipedia top articles)', type: 'live' as const },
+              { name: 'News coverage (GDELT)', type: 'live' as const },
+              { name: 'Sentiment (GDELT headlines)', type: 'live' as const },
+              { name: 'YouTube social reach', type: 'live' as const },
+              { name: 'Reddit conversation', type: 'partial' as const },
+            ].map(source => (
+              <div key={source.name} className="flex items-center justify-between border-b border-zinc-800/60 pb-1.5">
+                <span className="text-zinc-400">{source.name}</span>
+                <DataSourceBadge type={source.type} />
+              </div>
+            ))}
+          </div>
+          <p className="text-xs text-zinc-600 mt-2">
+            Scores computed live on each visit. Reddit requires API credentials.
+          </p>
+        </div>
       </div>
     </div>
   );

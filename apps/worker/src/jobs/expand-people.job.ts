@@ -64,7 +64,7 @@ async function fetchPage(offset: number): Promise<Array<{ wikidataQid: string; d
     .map(b => ({
       wikidataQid: b.wikidataQid.value,
       displayName: b.personLabel.value,
-      occupation: b.occupation?.value,
+      ...(b.occupation?.value ? { occupation: b.occupation.value } : {}),
     }));
 }
 

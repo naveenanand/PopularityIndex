@@ -99,6 +99,9 @@ importers:
       dotenv:
         specifier: ^16.4.7
         version: 16.6.1
+      drizzle-orm:
+        specifier: ^0.43.1
+        version: 0.43.1(postgres@3.4.9)
       p-limit:
         specifier: ^6.2.0
         version: 6.2.0

@@ -10,7 +10,8 @@
     "ingest:wikipedia": "tsx src/commands/ingest-wikipedia.ts",
     "score:calculate": "tsx src/commands/score-calculate.ts",
     "expand:people": "tsx src/commands/expand-people.ts",
-    "update:photos": "tsx src/commands/update-photos.ts"
+    "update:photos": "tsx src/commands/update-photos.ts",
+    "bulk:import": "tsx src/commands/bulk-import.ts"
   },
   "dependencies": {
     "@pai/db": "workspace:*",
@@ -19,6 +20,7 @@
     "@pai/shared": "workspace:*",
     "commander": "^13.1.0",
     "dotenv": "^16.4.7",
+    "drizzle-orm": "^0.43.1",
     "p-limit": "^6.2.0",
     "p-retry": "^6.2.1"
   },

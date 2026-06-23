@@ -33,3 +33,5 @@ drizzle/
 # Editor
 .vscode/settings.json
 .idea/
+
+.vercel
