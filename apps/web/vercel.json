@@ -1,0 +1,6 @@
+{
+  "installCommand": "cd ../.. && pnpm install",
+  "buildCommand": "cd ../.. && pnpm --filter @pai/shared build && pnpm --filter @pai/scoring build && pnpm --filter @pai/providers build && pnpm --filter @pai/db build && pnpm --filter @pai/web build",
+  "outputDirectory": ".next",
+  "framework": "nextjs"
+}
