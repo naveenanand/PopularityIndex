@@ -8,6 +8,13 @@
       "when": 1782196515938,
       "tag": "0000_silly_the_liberteens",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1782248024759,
+      "tag": "0001_add_photo_url",
+      "breakpoints": true
     }
   ]
 }
