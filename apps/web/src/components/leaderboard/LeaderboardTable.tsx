@@ -1,6 +1,6 @@
-import Link from 'next/link';
-import type { LeaderboardEntry } from '../../lib/api.js';
-import { formatScore, coverageBadgeColor } from '../../lib/formatters.js';
+﻿import Link from 'next/link';
+import type { LeaderboardEntry } from '../../lib/api';
+import { formatScore, coverageBadgeColor } from '../../lib/formatters';
 
 interface Props {
   entries: LeaderboardEntry[];

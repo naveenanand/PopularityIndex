@@ -1,0 +1,9 @@
+{
+  "buildCommand": "pnpm --filter @pai/shared build && pnpm --filter @pai/scoring build && pnpm --filter @pai/providers build && pnpm --filter @pai/db build && pnpm --filter @pai/web build",
+  "outputDirectory": "apps/web/.next",
+  "installCommand": "pnpm install",
+  "framework": "nextjs",
+  "rewrites": [
+    { "source": "/(.*)", "destination": "/$1" }
+  ]
+}

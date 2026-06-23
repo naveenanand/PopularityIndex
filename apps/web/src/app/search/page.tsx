@@ -1,7 +1,7 @@
-import Link from 'next/link';
+﻿import Link from 'next/link';
 import { Suspense } from 'react';
-import { SearchBar } from '../../components/shared/SearchBar.js';
-import { searchPeople } from '../../lib/api.js';
+import { SearchBar } from '../../components/shared/SearchBar';
+import { searchPeople } from '../../lib/api';
 
 type SearchParams = Promise<{ q?: string }>;
 
