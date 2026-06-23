@@ -1,0 +1,35 @@
+# Dependencies
+node_modules/
+
+# Build outputs
+dist/
+.next/
+.turbo/
+*.tsbuildinfo
+
+# Environment - never commit secrets
+*.env
+.env.local
+.env.*.local
+!.env.example
+
+# Logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Test coverage
+coverage/
+.vitest-cache/
+
+# Drizzle generated (but keep migrations)
+drizzle/
+!packages/db/src/migrations/
+
+# Editor
+.vscode/settings.json
+.idea/

@@ -1,0 +1,49 @@
+name: CI
+
+on:
+  push:
+    branches: [main, 'feature/**']
+  pull_request:
+    branches: [main]
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.x'
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Type check
+        run: pnpm typecheck
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Build packages
+        run: |
+          pnpm --filter @pai/shared build
+          pnpm --filter @pai/scoring build
+          pnpm --filter @pai/providers build
+          pnpm --filter @pai/db build
+
+      - name: Test
+        run: pnpm test
+
+      - name: Build web
+        run: pnpm --filter @pai/web build
+        env:
+          DATABASE_URL: postgresql://test:test@localhost:5432/test
+          SKIP_DB_CHECK: 'true'
+          WIKIMEDIA_USER_AGENT: PopularityIndex/0.1.0 (ci@example.com)
