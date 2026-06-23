@@ -1,11 +1,11 @@
 import { notFound } from 'next/navigation';
 import Link from 'next/link';
-import { getPersonWithScores } from '../../../lib/api.js';
-import { ScoreHistoryChart } from '../../../components/person/ScoreHistoryChart.js';
-import { SignalBreakdown } from '../../../components/person/SignalBreakdown.js';
-import { SentimentPanel } from '../../../components/person/SentimentPanel.js';
-import { DataSourceBadge } from '../../../components/shared/DataSourceBadge.js';
-import { formatScore, formatDate, coverageBadgeColor } from '../../../lib/formatters.js';
+import { getPersonWithScores } from '../../../lib/api';
+import { ScoreHistoryChart } from '../../../components/person/ScoreHistoryChart';
+import { SignalBreakdown } from '../../../components/person/SignalBreakdown';
+import { SentimentPanel } from '../../../components/person/SentimentPanel';
+import { DataSourceBadge } from '../../../components/shared/DataSourceBadge';
+import { formatScore, formatDate, coverageBadgeColor } from '../../../lib/formatters';
 
 interface PageProps {
   params: Promise<{ wikidataQid: string }>;
