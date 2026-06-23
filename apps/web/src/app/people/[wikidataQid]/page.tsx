@@ -37,7 +37,6 @@ export default async function PersonPage({ params }: PageProps) {
       <div className="flex items-start justify-between flex-wrap gap-4">
         <div className="flex items-center gap-4">
           {photoUrl ? (
-            // eslint-disable-next-line @next/next/no-img-element
             <img
               src={photoUrl}
               alt={person.displayName}
