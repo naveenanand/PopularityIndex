@@ -1,0 +1,27 @@
+{
+  "name": "@pai/worker",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint src",
+    "ingest:wikipedia": "tsx src/commands/ingest-wikipedia.ts",
+    "score:calculate": "tsx src/commands/score-calculate.ts"
+  },
+  "dependencies": {
+    "@pai/db": "workspace:*",
+    "@pai/providers": "workspace:*",
+    "@pai/scoring": "workspace:*",
+    "@pai/shared": "workspace:*",
+    "commander": "^13.1.0",
+    "dotenv": "^16.4.7",
+    "p-limit": "^6.2.0",
+    "p-retry": "^6.2.1"
+  },
+  "devDependencies": {
+    "tsx": "^4.19.4",
+    "typescript": "^5.8.3"
+  }
+}
