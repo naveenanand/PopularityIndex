@@ -229,6 +229,53 @@ export interface NewsArticle {
   seendate: string;
 }
 
+export interface TrendingEntry extends LeaderboardEntry {
+  articleCount: number;
+}
+
+async function fetchGDELTCount(name: string, timespan: string): Promise<number> {
+  const params = new URLSearchParams({
+    query: `"${name}"`, mode: 'artlist', maxrecords: '50',
+    format: 'json', timespan, sort: 'DateDesc',
+  });
+  try {
+    const res = await fetch(`https://api.gdeltproject.org/api/v2/doc/doc?${params}`, {
+      headers: { 'User-Agent': WIKIMEDIA_UA },
+      signal: AbortSignal.timeout(8_000),
+    });
+    if (!res.ok) return 0;
+    const data = (await res.json()) as { articles?: unknown[] };
+    return data.articles?.length ?? 0;
+  } catch {
+    return 0;
+  }
+}
+
+export async function getTrendingLeaderboard(
+  timespan: '1h' | '24h' | '30d',
+  limit = 50,
+): Promise<TrendingEntry[]> {
+  // Pull top 200 by popularity from DB (most likely to actually trend)
+  const base = await getLeaderboard('popularity', 200);
+  if (base.length === 0) return [];
+
+  // Fetch GDELT counts in batches of 8 to stay within timeout budgets
+  const BATCH = 8;
+  const counts = new Map<string, number>();
+  for (let i = 0; i < base.length; i += BATCH) {
+    const batch = base.slice(i, i + BATCH);
+    const results = await Promise.all(
+      batch.map(e => fetchGDELTCount(e.displayName, timespan).then(n => ({ qid: e.wikidataQid, n }))),
+    );
+    results.forEach(r => counts.set(r.qid, r.n));
+  }
+
+  return base
+    .map(e => ({ ...e, articleCount: counts.get(e.wikidataQid) ?? 0 }))
+    .sort((a, b) => b.articleCount - a.articleCount)
+    .slice(0, limit);
+}
+
 export async function getPersonTopArticles(displayName: string): Promise<NewsArticle[]> {
   const params = new URLSearchParams({
     query: `"${displayName}"`,

@@ -1,6 +1,6 @@
 import { notFound } from 'next/navigation';
 import Link from 'next/link';
-import { getPersonWithScores, getPersonRawObservations, getPersonPhoto, getPersonTopArticles } from '../../../lib/api';
+import { getPersonWithScores, getPersonRawObservations, getPersonPhoto } from '../../../lib/api';
 import { computeLiveScore } from '../../../lib/live-score';
 import { ScoreHistoryChart } from '../../../components/person/ScoreHistoryChart';
 import { SignalBreakdown } from '../../../components/person/SignalBreakdown';
@@ -23,13 +23,14 @@ export default async function PersonPage({ params }: PageProps) {
 
   const { person, scoreHistory } = data;
 
-  const [rawObs, photoUrl, articles] = await Promise.all([
+  const [rawObs, photoUrl] = await Promise.all([
     getPersonRawObservations(person.id),
     getPersonPhoto(person.displayName),
-    getPersonTopArticles(person.displayName),
   ]);
 
-  const liveScore = await computeLiveScore(person.id, person.displayName, rawObs);
+  const liveResult = await computeLiveScore(person.id, person.displayName, rawObs);
+  const liveScore = liveResult.score;
+  const articles = liveResult.articles;
 
   return (
     <div className="space-y-6 max-w-3xl mx-auto">
