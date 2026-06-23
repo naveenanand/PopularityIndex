@@ -20,4 +20,4 @@ export const ScoreExplanationSchema = z.object({
   signals_missing: z.array(z.string()),
 });
 
-export type ScoreExplanation = z.infer<typeof ScoreExplanationSchema>;
+// Use the ScoreExplanation interface from score.types.ts — don't re-export a duplicate type here.
