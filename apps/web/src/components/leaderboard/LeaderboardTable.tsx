@@ -20,9 +20,10 @@ function avatarColor(name: string): string {
 
 interface Props {
   entries: LeaderboardEntry[];
+  startRank?: number;
 }
 
-export function LeaderboardTable({ entries }: Props) {
+export function LeaderboardTable({ entries, startRank = 1 }: Props) {
   if (entries.length === 0) {
     return (
       <div className="text-center py-16 text-gray-500">
@@ -53,7 +54,7 @@ export function LeaderboardTable({ entries }: Props) {
         <tbody className="divide-y divide-gray-100">
           {entries.map((entry) => (
             <tr key={entry.wikidataQid} className="hover:bg-gray-50 transition-colors">
-              <td className="py-3 pr-4 text-gray-400 font-mono text-xs">{entry.rank}</td>
+              <td className="py-3 pr-4 text-gray-400 font-mono text-xs">{startRank + entries.indexOf(entry)}</td>
               <td className="py-3 pr-4">
                 <Link href={`/people/${entry.wikidataQid}`} className="flex items-center gap-2.5 group">
                   {entry.photoUrl ? (
