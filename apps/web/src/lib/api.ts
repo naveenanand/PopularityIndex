@@ -44,6 +44,7 @@ export interface PersonWithScores {
 export async function getLeaderboard(
   sortBy: 'popularity' | 'heat' = 'popularity',
   limit = 100,
+  offset = 0,
 ): Promise<LeaderboardEntry[]> {
   const conn = await db();
   if (!conn) return [];
@@ -79,7 +80,8 @@ export async function getLeaderboard(
       ),
     )
     .orderBy(desc(sortCol))
-    .limit(limit);
+    .limit(limit)
+    .offset(offset);
 
   return rows.map((row, idx) => {
     const explanation = row.score.explanationJson as ScoreExplanation;
@@ -104,7 +106,12 @@ export async function getPersonWithScores(wikidataQid: string): Promise<PersonWi
   if (!conn) return null;
 
   const personRows = await conn
-    .select()
+    .select({
+      id: people.id,
+      wikidataQid: people.wikidataQid,
+      displayName: people.displayName,
+      occupationSummary: people.occupationSummary,
+    })
     .from(people)
     .where(eq(people.wikidataQid, wikidataQid))
     .limit(1);
@@ -189,7 +196,14 @@ export async function searchPeople(query: string) {
   const normalized = query.toLowerCase().trim();
 
   const rows = await conn
-    .selectDistinct({ person: people })
+    .selectDistinct({
+      person: {
+        id: people.id,
+        wikidataQid: people.wikidataQid,
+        displayName: people.displayName,
+        occupationSummary: people.occupationSummary,
+      },
+    })
     .from(people)
     .leftJoin(personAliases, eq(personAliases.personId, people.id))
     .where(
@@ -241,7 +255,7 @@ async function fetchGDELTCount(name: string, timespan: string): Promise<number> 
   try {
     const res = await fetch(`https://api.gdeltproject.org/api/v2/doc/doc?${params}`, {
       headers: { 'User-Agent': WIKIMEDIA_UA },
-      signal: AbortSignal.timeout(8_000),
+      signal: AbortSignal.timeout(5_000),
     });
     if (!res.ok) return 0;
     const data = (await res.json()) as { articles?: unknown[] };
@@ -292,7 +306,8 @@ export async function getTrendingLeaderboard(
 
   if (rows.length === 0) return [];
 
-  const base: LeaderboardEntry[] = rows.map((row, idx) => {
+  // Take top 30 by popularity — enough to surface trending people without timeouts
+  const base: LeaderboardEntry[] = rows.slice(0, 30).map((row, idx) => {
     const explanation = row.score.explanationJson as ScoreExplanation;
     return {
       rank: idx + 1,
@@ -309,16 +324,11 @@ export async function getTrendingLeaderboard(
     };
   });
 
-  // Fetch GDELT counts in batches of 8 to stay within timeout budgets
-  const BATCH = 8;
-  const counts = new Map<string, number>();
-  for (let i = 0; i < base.length; i += BATCH) {
-    const batch = base.slice(i, i + BATCH);
-    const results = await Promise.all(
-      batch.map(e => fetchGDELTCount(e.displayName, timespan).then(n => ({ qid: e.wikidataQid, n }))),
-    );
-    results.forEach(r => counts.set(r.qid, r.n));
-  }
+  // Fetch all GDELT counts in parallel — 30 calls with 5s timeout each
+  const results = await Promise.all(
+    base.map(e => fetchGDELTCount(e.displayName, timespan).then(n => ({ qid: e.wikidataQid, n }))),
+  );
+  const counts = new Map(results.map(r => [r.qid, r.n]));
 
   return base
     .map(e => ({ ...e, articleCount: counts.get(e.wikidataQid) ?? 0 }))
