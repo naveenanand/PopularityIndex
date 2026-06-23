@@ -110,8 +110,8 @@ export async function computeLiveScore(
   rawObs: RawPersonObservations,
 ): Promise<LiveScoreResult> {
   const [gdelt24h, gdelt7d, trending] = await Promise.all([
-    fetchGDELT(displayName, '24h'),
-    fetchGDELT(displayName, '7d', '10'), // fewer records for display
+    fetchGDELT(displayName, '1440'),        // 24h in minutes
+    fetchGDELT(displayName, '10080', '10'), // 7d in minutes, fewer records for display
     fetchWikipediaTrending(displayName),
   ]);
 

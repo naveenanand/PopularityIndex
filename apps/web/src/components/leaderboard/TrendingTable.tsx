@@ -30,12 +30,13 @@ interface Props {
 
 export function TrendingTable({ entries, timespan }: Props) {
   if (entries.length === 0 || entries.every(e => e.articleCount === 0)) {
+    const hint = timespan === '1h'
+      ? 'The 1-hour window is very narrow — try Last 24h or Last 30d for results.'
+      : 'GDELT data may be loading. Refresh in a moment or try a wider time window.';
     return (
       <div className="text-center py-16 text-gray-500">
-        <p className="text-lg font-medium">No trending activity detected</p>
-        <p className="text-sm mt-2 text-gray-400">
-          No news articles found in the {PERIOD_LABEL[timespan] ?? timespan} for tracked people.
-        </p>
+        <p className="text-lg font-medium">No articles found in the {PERIOD_LABEL[timespan] ?? timespan}</p>
+        <p className="text-sm mt-2 text-gray-400">{hint}</p>
       </div>
     );
   }
