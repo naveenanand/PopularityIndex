@@ -1,7 +1,12 @@
 import { calculateScores } from '@pai/scoring';
 import type { ScoringFeatures } from '@pai/shared';
 import type { ScoreEngineOutput } from '@pai/scoring';
-import type { RawPersonObservations } from './api';
+import type { RawPersonObservations, NewsArticle } from './api';
+
+export interface LiveScoreResult {
+  score: ScoreEngineOutput;
+  articles: NewsArticle[];
+}
 
 const GDELT_BASE = 'https://api.gdeltproject.org/api/v2/doc/doc';
 const WIKIMEDIA_UA = process.env['WIKIMEDIA_USER_AGENT'] ?? 'PopularityIndex/0.1.0';
@@ -22,11 +27,11 @@ const NEGATIVE = new Set([
   'trouble','ban','banned','arrest','crime','fraud','lie','lied','fake',
 ]);
 
-interface GDELTArticle { domain: string; title: string; language?: string }
+interface GDELTArticle { url?: string; domain: string; title: string; seendate?: string; language?: string }
 
-async function fetchGDELT(name: string, timespan: string) {
+async function fetchGDELT(name: string, timespan: string, maxrecords = '250') {
   const params = new URLSearchParams({
-    query: `"${name}"`, mode: 'artlist', maxrecords: '250',
+    query: `"${name}"`, mode: 'artlist', maxrecords,
     format: 'json', timespan, sort: 'DateDesc',
   });
   try {
@@ -34,16 +39,17 @@ async function fetchGDELT(name: string, timespan: string) {
       headers: { 'User-Agent': WIKIMEDIA_UA },
       signal: AbortSignal.timeout(15_000),
     });
-    if (!res.ok) return { count: 0, domains: [] as string[], titles: [] as string[] };
+    if (!res.ok) return { count: 0, domains: [] as string[], titles: [] as string[], raw: [] as GDELTArticle[] };
     const data = (await res.json()) as { articles?: GDELTArticle[] };
     const articles = data.articles ?? [];
     return {
       count: articles.length,
       domains: articles.map(a => a.domain),
       titles: articles.filter(a => !a.language || a.language === 'English').map(a => a.title),
+      raw: articles,
     };
   } catch {
-    return { count: 0, domains: [] as string[], titles: [] as string[] };
+    return { count: 0, domains: [] as string[], titles: [] as string[], raw: [] as GDELTArticle[] };
   }
 }
 
@@ -102,10 +108,10 @@ export async function computeLiveScore(
   personId: number,
   displayName: string,
   rawObs: RawPersonObservations,
-): Promise<ScoreEngineOutput> {
+): Promise<LiveScoreResult> {
   const [gdelt24h, gdelt7d, trending] = await Promise.all([
     fetchGDELT(displayName, '24h'),
-    fetchGDELT(displayName, '7d'),
+    fetchGDELT(displayName, '7d', '10'), // fewer records for display
     fetchWikipediaTrending(displayName),
   ]);
 
@@ -155,5 +161,15 @@ export async function computeLiveScore(
   features.searchSpike = trending.searchSpike;
   features.searchTrendVelocity = trending.searchVelocity;
 
-  return calculateScores({ personId, features });
+  const score = calculateScores({ personId, features });
+
+  // Top 3 articles from 7d results for display
+  const articles: NewsArticle[] = gdelt7d.raw.slice(0, 3).map(a => ({
+    title: a.title,
+    url: a.url ?? '',
+    domain: a.domain,
+    seendate: a.seendate ?? '',
+  }));
+
+  return { score, articles };
 }

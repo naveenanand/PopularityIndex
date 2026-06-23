@@ -1,14 +1,34 @@
-﻿import Link from 'next/link';
-import { getLeaderboard } from '../lib/api';
+export const revalidate = 300; // 5 min — covers the trending tabs' live GDELT queries
+
+import Link from 'next/link';
+import { getLeaderboard, getTrendingLeaderboard } from '../lib/api';
 import { LeaderboardTable } from '../components/leaderboard/LeaderboardTable';
+import { TrendingTable } from '../components/leaderboard/TrendingTable';
 import { SearchBar } from '../components/shared/SearchBar';
 
 type SearchParams = Promise<{ sort?: string }>;
 
+const TABS = [
+  { key: 'popularity', label: 'All Time' },
+  { key: 'heat', label: 'Heat' },
+  { key: 'trending_1h', label: 'Last Hour' },
+  { key: 'trending_24h', label: 'Last 24h' },
+  { key: 'trending_30d', label: 'Last 30d' },
+] as const;
+
+type SortKey = typeof TABS[number]['key'];
+
 export default async function HomePage({ searchParams }: { searchParams: SearchParams }) {
   const { sort } = await searchParams;
-  const sortBy = sort === 'heat' ? 'heat' : 'popularity';
-  const entries = await getLeaderboard(sortBy, 100);
+  const sortKey: SortKey = (TABS.find(t => t.key === sort)?.key) ?? 'popularity';
+
+  const isTrending = sortKey.startsWith('trending_');
+  const timespanMap = { trending_1h: '1h', trending_24h: '24h', trending_30d: '30d' } as const;
+
+  const [entries, trendingEntries] = await Promise.all([
+    !isTrending ? getLeaderboard(sortKey === 'heat' ? 'heat' : 'popularity', 100) : Promise.resolve([]),
+    isTrending ? getTrendingLeaderboard(timespanMap[sortKey as keyof typeof timespanMap], 50) : Promise.resolve([]),
+  ]);
 
   return (
     <div className="space-y-6">
@@ -24,37 +44,44 @@ export default async function HomePage({ searchParams }: { searchParams: SearchP
         </div>
       </div>
 
-      <div className="flex items-center gap-3 text-sm">
-        <span className="text-gray-500">Sort by:</span>
-        <Link
-          href="/?sort=popularity"
-          className={`px-3 py-1 rounded-full border transition-colors ${
-            sortBy === 'popularity'
-              ? 'bg-indigo-600 text-white border-indigo-600'
-              : 'text-gray-600 border-gray-300 hover:border-indigo-400'
-          }`}
-        >
-          Popularity
-        </Link>
-        <Link
-          href="/?sort=heat"
-          className={`px-3 py-1 rounded-full border transition-colors ${
-            sortBy === 'heat'
-              ? 'bg-amber-500 text-white border-amber-500'
-              : 'text-gray-600 border-gray-300 hover:border-amber-400'
-          }`}
-        >
-          Heat (trending)
-        </Link>
+      {/* Tabs */}
+      <div className="flex items-center gap-2 flex-wrap text-sm">
+        {TABS.map(tab => {
+          const active = sortKey === tab.key;
+          const isTrendingTab = tab.key.startsWith('trending_');
+          return (
+            <Link
+              key={tab.key}
+              href={`/?sort=${tab.key}`}
+              className={`px-3 py-1.5 rounded-full border transition-colors font-medium ${
+                active
+                  ? isTrendingTab
+                    ? 'bg-rose-500 text-white border-rose-500'
+                    : tab.key === 'heat'
+                      ? 'bg-amber-500 text-white border-amber-500'
+                      : 'bg-indigo-600 text-white border-indigo-600'
+                  : 'text-gray-600 border-gray-300 hover:border-gray-400'
+              }`}
+            >
+              {isTrendingTab && <span className="mr-1">🔥</span>}
+              {tab.label}
+            </Link>
+          );
+        })}
+        {isTrending && (
+          <span className="text-xs text-gray-400 ml-2">Live · refreshes every 5 min</span>
+        )}
       </div>
 
       <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-6">
-        <LeaderboardTable entries={entries} />
+        {isTrending
+          ? <TrendingTable entries={trendingEntries} timespan={timespanMap[sortKey as keyof typeof timespanMap]} />
+          : <LeaderboardTable entries={entries} />
+        }
       </div>
 
       <p className="text-xs text-gray-400 text-center">
-        Scores updated daily. Live data: Wikipedia, Wikidata. Mock data: Search, News, Social
-        (labeled per signal).
+        Scores updated every 2 hours. Trending tabs show live GDELT news article counts.
       </p>
     </div>
   );
