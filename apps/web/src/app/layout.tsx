@@ -1,7 +1,6 @@
-﻿import type { Metadata } from 'next';
+import type { Metadata } from 'next';
 import './globals.css';
 import { NavBar } from '../components/shared/NavBar';
-import { MethodologyDisclaimer } from '../components/shared/MethodologyDisclaimer';
 
 export const metadata: Metadata = {
   title: 'Public Attention Index',
@@ -12,12 +11,14 @@ export const metadata: Metadata = {
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en">
-      <body className="bg-gray-50 text-gray-900 antialiased min-h-screen flex flex-col">
+      <body className="bg-[#0a0a0a] text-zinc-100 antialiased min-h-screen flex flex-col">
         <NavBar />
-        <main className="flex-1 max-w-6xl mx-auto w-full px-4 py-8">{children}</main>
-        <footer className="border-t border-gray-200 bg-white py-4 px-4">
-          <div className="max-w-6xl mx-auto">
-            <MethodologyDisclaimer />
+        <main className="flex-1">{children}</main>
+        <footer className="border-t border-zinc-800 py-6 px-6 mt-16">
+          <div className="max-w-7xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-3 text-xs text-zinc-600">
+            <span className="font-semibold text-zinc-500">Public Attention Index</span>
+            <span>Scores based on Wikipedia pageviews, GDELT news coverage, and Wikidata signals. Not a judgment of talent or worth.</span>
+            <a href="/methodology" className="text-zinc-500 hover:text-zinc-300 transition-colors">Methodology →</a>
           </div>
         </footer>
       </body>

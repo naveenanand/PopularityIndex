@@ -1,4 +1,4 @@
-﻿import { eq, desc, ilike, or, and, sql } from 'drizzle-orm';
+import { eq, desc, asc, ilike, or, and, sql, count } from 'drizzle-orm';
 import { people, personAliases, scoreSnapshots, pageviewObservations, sourceObservations } from '@pai/db';
 import type { ScoreExplanation } from '@pai/shared';
 import { db } from './db';
@@ -41,16 +41,56 @@ export interface PersonWithScores {
   }>;
 }
 
-export async function getLeaderboard(
-  sortBy: 'popularity' | 'heat' = 'popularity',
-  limit = 100,
-  offset = 0,
-): Promise<LeaderboardEntry[]> {
-  const conn = await db();
-  if (!conn) return [];
+export interface BrowsePerson {
+  id: number;
+  wikidataQid: string;
+  displayName: string;
+  occupationSummary: string | null;
+}
 
+export interface FeedArticle {
+  title: string;
+  url: string;
+  domain: string;
+  seendate: string;
+  personName: string;
+  personQid: string;
+}
+
+export interface NewsArticle {
+  title: string;
+  url: string;
+  domain: string;
+  seendate: string;
+}
+
+export interface TrendingEntry extends LeaderboardEntry {
+  articleCount: number;
+}
+
+const WIKIMEDIA_UA = process.env['WIKIMEDIA_USER_AGENT'] ?? 'PopularityIndex/0.1.0';
+
+// Fetch a Wikipedia thumbnail — cached by Next.js for 24 hours (no repeat API calls)
+export async function getPersonPhoto(displayName: string): Promise<string | null> {
+  const title = encodeURIComponent(displayName.replace(/ /g, '_'));
+  try {
+    const res = await fetch(`https://en.wikipedia.org/api/rest_v1/page/summary/${title}`, {
+      headers: { 'User-Agent': WIKIMEDIA_UA },
+      next: { revalidate: 86400 },
+    });
+    if (!res.ok) return null;
+    const data = (await res.json()) as { thumbnail?: { source: string } };
+    return data.thumbnail?.source ?? null;
+  } catch {
+    return null;
+  }
+}
+
+function buildLeaderboardBase(
+  conn: NonNullable<Awaited<ReturnType<typeof db>>>,
+  sortBy: 'popularity' | 'heat',
+) {
   const sortCol = sortBy === 'heat' ? scoreSnapshots.heatScore : scoreSnapshots.popularityScore;
-
   const latestScores = conn
     .select({
       personId: scoreSnapshots.personId,
@@ -59,6 +99,18 @@ export async function getLeaderboard(
     .from(scoreSnapshots)
     .groupBy(scoreSnapshots.personId)
     .as('latest_scores');
+  return { sortCol, latestScores };
+}
+
+export async function getLeaderboard(
+  sortBy: 'popularity' | 'heat' = 'popularity',
+  limit = 100,
+  offset = 0,
+): Promise<LeaderboardEntry[]> {
+  const conn = await db();
+  if (!conn) return [];
+
+  const { sortCol, latestScores } = buildLeaderboardBase(conn, sortBy);
 
   const rows = await conn
     .select({
@@ -83,10 +135,16 @@ export async function getLeaderboard(
     .limit(limit)
     .offset(offset);
 
+  // Fetch photos in parallel — Next.js data cache means this only hits Wikipedia once per 24h
+  const photoResults = await Promise.allSettled(
+    rows.map(row => getPersonPhoto(row.person.displayName)),
+  );
+
   return rows.map((row, idx) => {
     const explanation = row.score.explanationJson as ScoreExplanation;
+    const pr = photoResults[idx];
     return {
-      rank: idx + 1,
+      rank: offset + idx + 1,
       wikidataQid: row.person.wikidataQid,
       displayName: row.person.displayName,
       occupationSummary: row.person.occupationSummary,
@@ -96,7 +154,7 @@ export async function getLeaderboard(
       coverageLabel: explanation?.coverage_label ?? 'Partial coverage',
       scoreModelVersion: row.score.scoreModelVersion,
       calculatedAt: row.score.calculatedAt,
-      photoUrl: null as string | null,
+      photoUrl: pr?.status === 'fulfilled' ? (pr.value ?? null) : null,
     };
   });
 }
@@ -127,7 +185,6 @@ export async function getPersonWithScores(wikidataQid: string): Promise<PersonWi
     .limit(30);
 
   const latestRaw = allScores[0];
-
   const latestScore = latestRaw
     ? {
         popularityScore: latestRaw.popularityScore,
@@ -141,12 +198,6 @@ export async function getPersonWithScores(wikidataQid: string): Promise<PersonWi
       }
     : null;
 
-  const scoreHistory = allScores.map((s) => ({
-    calculatedAt: s.calculatedAt,
-    popularityScore: s.popularityScore,
-    heatScore: s.heatScore,
-  }));
-
   return {
     person: {
       id: person.id,
@@ -155,7 +206,11 @@ export async function getPersonWithScores(wikidataQid: string): Promise<PersonWi
       occupationSummary: person.occupationSummary,
     },
     latestScore,
-    scoreHistory,
+    scoreHistory: allScores.map(s => ({
+      calculatedAt: s.calculatedAt,
+      popularityScore: s.popularityScore,
+      heatScore: s.heatScore,
+    })),
   };
 }
 
@@ -181,20 +236,15 @@ export async function getPersonRawObservations(personId: number): Promise<RawPer
       .where(eq(sourceObservations.personId, personId)),
   ]);
 
-  return {
-    pageviews: pvRows,
-    sourceObs: obsRows,
-  };
+  return { pageviews: pvRows, sourceObs: obsRows };
 }
 
 export async function searchPeople(query: string) {
   if (!query || query.trim().length < 2) return [];
-
   const conn = await db();
   if (!conn) return [];
 
   const normalized = query.toLowerCase().trim();
-
   const rows = await conn
     .selectDistinct({
       person: {
@@ -213,42 +263,127 @@ export async function searchPeople(query: string) {
         ilike(personAliases.alias, `%${normalized}%`),
       ),
     )
-    .limit(20);
+    .limit(50);
 
-  return rows.map((r) => r.person);
+  return rows.map(r => r.person);
 }
 
-const WIKIMEDIA_UA = process.env['WIKIMEDIA_USER_AGENT'] ?? 'PopularityIndex/0.1.0';
+// Browse ALL people (not just scored) — for the /browse page with millions of records
+export async function browsePeople(
+  offset = 0,
+  limit = 60,
+  query?: string,
+): Promise<{ items: BrowsePerson[]; total: number }> {
+  const conn = await db();
+  if (!conn) return { items: [], total: 0 };
 
-export async function getPersonPhoto(displayName: string): Promise<string | null> {
-  const title = encodeURIComponent(displayName.replace(/ /g, '_'));
+  const whereClause = query
+    ? or(
+        ilike(people.displayName, `%${query.toLowerCase()}%`),
+        ilike(people.normalizedName, `%${query.toLowerCase()}%`),
+      )
+    : undefined;
+
+  const [rows, countRows] = await Promise.all([
+    conn
+      .select({
+        id: people.id,
+        wikidataQid: people.wikidataQid,
+        displayName: people.displayName,
+        occupationSummary: people.occupationSummary,
+      })
+      .from(people)
+      .where(whereClause)
+      .orderBy(asc(people.displayName))
+      .limit(limit)
+      .offset(offset),
+    conn
+      .select({ total: count() })
+      .from(people)
+      .where(whereClause),
+  ]);
+
+  return {
+    items: rows,
+    total: Number(countRows[0]?.total ?? 0),
+  };
+}
+
+// News feed: one GDELT OR-query across top people, cached 1 hour
+export async function getNewsFeed(): Promise<FeedArticle[]> {
+  const conn = await db();
+  if (!conn) return [];
+
+  const latestScores = conn
+    .select({
+      personId: scoreSnapshots.personId,
+      maxCalcAt: sql<string>`max(${scoreSnapshots.calculatedAt})`.as('max_calc_at'),
+    })
+    .from(scoreSnapshots)
+    .groupBy(scoreSnapshots.personId)
+    .as('ls');
+
+  const top = await conn
+    .select({
+      wikidataQid: people.wikidataQid,
+      displayName: people.displayName,
+    })
+    .from(people)
+    .innerJoin(latestScores, eq(latestScores.personId, people.id))
+    .innerJoin(
+      scoreSnapshots,
+      and(
+        eq(scoreSnapshots.personId, people.id),
+        eq(scoreSnapshots.calculatedAt, sql`${latestScores.maxCalcAt}`),
+      ),
+    )
+    .orderBy(desc(scoreSnapshots.popularityScore))
+    .limit(8);
+
+  if (top.length === 0) return [];
+
+  const orQuery = top.map(p => `"${p.displayName}"`).join(' OR ');
+  const params = new URLSearchParams({
+    query: orQuery,
+    mode: 'artlist',
+    maxrecords: '20',
+    format: 'json',
+    timespan: '1440', // 24h in minutes
+    sort: 'DateDesc',
+  });
+
   try {
-    const res = await fetch(`https://en.wikipedia.org/api/rest_v1/page/summary/${title}`, {
+    const res = await fetch(`https://api.gdeltproject.org/api/v2/doc/doc?${params}`, {
       headers: { 'User-Agent': WIKIMEDIA_UA },
-      signal: AbortSignal.timeout(5000),
-      next: { revalidate: 86400 },
+      next: { revalidate: 3600 }, // Cache feed for 1 hour
     });
-    if (!res.ok) return null;
-    const data = (await res.json()) as { thumbnail?: { source: string } };
-    return data.thumbnail?.source ?? null;
+    if (!res.ok) return [];
+    const data = (await res.json()) as {
+      articles?: Array<{ title: string; url: string; domain: string; seendate: string }>;
+    };
+    const articles = data.articles ?? [];
+
+    return articles.map(a => {
+      // Match article back to the person whose name appears in the title
+      const matched = top.find(p =>
+        a.title.toLowerCase().includes(p.displayName.toLowerCase().split(' ')[0] ?? ''),
+      ) ?? top[0]!;
+      return {
+        title: a.title,
+        url: a.url,
+        domain: a.domain,
+        seendate: a.seendate,
+        personName: matched.displayName,
+        personQid: matched.wikidataQid,
+      };
+    });
   } catch {
-    return null;
+    return [];
   }
 }
 
-export interface NewsArticle {
-  title: string;
-  url: string;
-  domain: string;
-  seendate: string;
-}
-
-export interface TrendingEntry extends LeaderboardEntry {
-  articleCount: number;
-}
-
 const GDELT_TIMESPAN: Record<string, string> = {
-  '1h': '60',      // GDELT uses minutes
+  '1h': '60',
   '24h': '1440',
   '30d': '43200',
 };
@@ -276,18 +411,10 @@ export async function getTrendingLeaderboard(
   timespan: '1h' | '24h' | '30d',
   limit = 50,
 ): Promise<TrendingEntry[]> {
-  // Lean DB query — no photo fetches, no external API calls in this step
   const conn = await db();
   if (!conn) return [];
 
-  const latestScores = conn
-    .select({
-      personId: scoreSnapshots.personId,
-      maxCalcAt: sql<string>`max(${scoreSnapshots.calculatedAt})`.as('max_calc_at'),
-    })
-    .from(scoreSnapshots)
-    .groupBy(scoreSnapshots.personId)
-    .as('latest_scores');
+  const { latestScores } = buildLeaderboardBase(conn, 'popularity');
 
   const rows = await conn
     .select({
@@ -313,7 +440,6 @@ export async function getTrendingLeaderboard(
 
   if (rows.length === 0) return [];
 
-  // Top 10 by popularity — 10 parallel calls stay under 8s timeout (Vercel Hobby limit)
   const base: LeaderboardEntry[] = rows.slice(0, 10).map((row, idx) => {
     const explanation = row.score.explanationJson as ScoreExplanation;
     return {
@@ -331,7 +457,6 @@ export async function getTrendingLeaderboard(
     };
   });
 
-  // 10 parallel GDELT calls — all resolve within the 8s timeout window
   const results = await Promise.all(
     base.map(e => fetchGDELTCount(e.displayName, timespan).then(n => ({ qid: e.wikidataQid, n }))),
   );
@@ -349,11 +474,12 @@ export async function getPersonTopArticles(displayName: string): Promise<NewsArt
     mode: 'artlist',
     maxrecords: '3',
     format: 'json',
-    timespan: '7d',
+    timespan: '10080', // 7d in minutes
     sort: 'DateDesc',
   });
   try {
     const res = await fetch(`https://api.gdeltproject.org/api/v2/doc/doc?${params}`, {
+      headers: { 'User-Agent': WIKIMEDIA_UA },
       next: { revalidate: 3600 },
     });
     if (!res.ok) return [];
