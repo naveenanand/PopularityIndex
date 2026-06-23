@@ -1,12 +1,15 @@
 import { notFound } from 'next/navigation';
 import Link from 'next/link';
-import { getPersonWithScores, getPersonPhoto, getPersonTopArticles } from '../../../lib/api';
+import { getPersonWithScores, getPersonRawObservations, getPersonPhoto, getPersonTopArticles } from '../../../lib/api';
+import { computeLiveScore } from '../../../lib/live-score';
 import { ScoreHistoryChart } from '../../../components/person/ScoreHistoryChart';
 import { SignalBreakdown } from '../../../components/person/SignalBreakdown';
 import { SentimentPanel } from '../../../components/person/SentimentPanel';
 import { TopArticles } from '../../../components/person/TopArticles';
 import { DataSourceBadge } from '../../../components/shared/DataSourceBadge';
 import { formatScore, formatDate, coverageBadgeColor } from '../../../lib/formatters';
+
+export const revalidate = 60;
 
 interface PageProps {
   params: Promise<{ wikidataQid: string }>;
@@ -18,12 +21,15 @@ export default async function PersonPage({ params }: PageProps) {
 
   if (!data) return notFound();
 
-  const { person, latestScore, scoreHistory } = data;
+  const { person, scoreHistory } = data;
 
-  const [photoUrl, articles] = await Promise.all([
+  const [rawObs, photoUrl, articles] = await Promise.all([
+    getPersonRawObservations(person.id),
     getPersonPhoto(person.displayName),
     getPersonTopArticles(person.displayName),
   ]);
+
+  const liveScore = await computeLiveScore(person.id, person.displayName, rawObs);
 
   return (
     <div className="space-y-6 max-w-3xl mx-auto">
@@ -31,7 +37,6 @@ export default async function PersonPage({ params }: PageProps) {
       <div className="flex items-start justify-between flex-wrap gap-4">
         <div className="flex items-center gap-4">
           {photoUrl ? (
-            // eslint-disable-next-line @next/next/no-img-element
             <img
               src={photoUrl}
               alt={person.displayName}
@@ -64,51 +69,45 @@ export default async function PersonPage({ params }: PageProps) {
             </div>
           </div>
         </div>
-        <Link href="/" className="text-sm text-gray-400 hover:text-gray-600">
-          ← Leaderboard
-        </Link>
+        <div className="flex flex-col items-end gap-1">
+          <Link href="/" className="text-sm text-gray-400 hover:text-gray-600">
+            ← Leaderboard
+          </Link>
+          <span className="text-[10px] text-gray-300">Live · refreshes every 60s</span>
+        </div>
       </div>
 
-      {/* Score cards */}
-      {latestScore ? (
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-          <div className="bg-white rounded-xl border border-gray-200 p-4 text-center shadow-sm">
-            <div className="text-3xl font-bold text-indigo-600">
-              {formatScore(latestScore.popularityScore)}
-            </div>
-            <div className="text-xs text-gray-500 mt-1">Popularity</div>
+      {/* Score cards — live computed */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+        <div className="bg-white rounded-xl border border-gray-200 p-4 text-center shadow-sm">
+          <div className="text-3xl font-bold text-indigo-600">
+            {formatScore(liveScore.popularityScore)}
           </div>
-          <div className="bg-white rounded-xl border border-gray-200 p-4 text-center shadow-sm">
-            <div className="text-3xl font-bold text-amber-500">
-              {formatScore(latestScore.heatScore)}
-            </div>
-            <div className="text-xs text-gray-500 mt-1">Heat (trending)</div>
+          <div className="text-xs text-gray-500 mt-1">Popularity</div>
+        </div>
+        <div className="bg-white rounded-xl border border-gray-200 p-4 text-center shadow-sm">
+          <div className="text-3xl font-bold text-amber-500">
+            {formatScore(liveScore.heatScore)}
           </div>
-          <div className="bg-white rounded-xl border border-gray-200 p-4 text-center shadow-sm">
-            <div className="text-3xl font-bold text-gray-700">
-              {Math.round(latestScore.coverageScore)}
-            </div>
-            <div className="mt-1">
-              <span
-                className={`inline-block px-2 py-0.5 rounded-full text-xs border ${coverageBadgeColor(latestScore.explanationJson.coverage_label)}`}
-              >
-                {latestScore.explanationJson.coverage_label}
-              </span>
-            </div>
+          <div className="text-xs text-gray-500 mt-1">Heat (trending)</div>
+        </div>
+        <div className="bg-white rounded-xl border border-gray-200 p-4 text-center shadow-sm">
+          <div className="text-3xl font-bold text-gray-700">
+            {Math.round(liveScore.coverageScore)}
           </div>
-          <div className="bg-white rounded-xl border border-gray-200 p-4 text-center shadow-sm">
-            <div className="text-3xl font-bold text-gray-700">
-              {Math.round(latestScore.confidenceScore)}
-            </div>
-            <div className="text-xs text-gray-500 mt-1">Confidence</div>
+          <div className="mt-1">
+            <span className={`inline-block px-2 py-0.5 rounded-full text-xs border ${coverageBadgeColor(liveScore.explanationJson.coverage_label)}`}>
+              {liveScore.explanationJson.coverage_label}
+            </span>
           </div>
         </div>
-      ) : (
-        <div className="bg-white rounded-xl border border-dashed border-gray-200 p-8 text-center text-gray-400">
-          <p>No scores available yet.</p>
-          <code className="text-xs mt-2 block">pnpm score:calculate</code>
+        <div className="bg-white rounded-xl border border-gray-200 p-4 text-center shadow-sm">
+          <div className="text-3xl font-bold text-gray-700">
+            {Math.round(liveScore.confidenceScore)}
+          </div>
+          <div className="text-xs text-gray-500 mt-1">Confidence</div>
         </div>
-      )}
+      </div>
 
       {/* Top news articles */}
       <TopArticles articles={articles} />
@@ -117,29 +116,23 @@ export default async function PersonPage({ params }: PageProps) {
       <div className="bg-white rounded-xl border border-gray-200 p-6 shadow-sm">
         <div className="flex items-center justify-between mb-4">
           <h2 className="font-semibold text-gray-900">Score history</h2>
-          {latestScore && (
-            <span className="text-xs text-gray-400">
-              Updated {formatDate(latestScore.calculatedAt)}
-            </span>
-          )}
+          <span className="text-xs text-gray-400">
+            {scoreHistory[0] ? `Last snapshot ${formatDate(scoreHistory[0].calculatedAt)}` : 'No history yet'}
+          </span>
         </div>
         <ScoreHistoryChart history={scoreHistory} />
       </div>
 
       {/* Why this score */}
-      {latestScore && (
-        <div className="bg-white rounded-xl border border-gray-200 p-6 shadow-sm">
-          <SignalBreakdown explanation={latestScore.explanationJson} />
-        </div>
-      )}
+      <div className="bg-white rounded-xl border border-gray-200 p-6 shadow-sm">
+        <SignalBreakdown explanation={liveScore.explanationJson} />
+      </div>
 
-      {/* Sentiment (separate) */}
-      {latestScore && (
-        <SentimentPanel
-          sentimentScore={latestScore.sentimentScore}
-          controversyScore={latestScore.controversyScore}
-        />
-      )}
+      {/* Sentiment */}
+      <SentimentPanel
+        sentimentScore={liveScore.sentimentScore}
+        controversyScore={liveScore.controversyScore}
+      />
 
       {/* Data sources */}
       <div className="bg-white rounded-xl border border-gray-200 p-6 shadow-sm space-y-3">
@@ -162,7 +155,7 @@ export default async function PersonPage({ params }: PageProps) {
           ))}
         </div>
         <p className="text-xs text-gray-400 mt-2">
-          Partial: Reddit requires API credentials and will show as unavailable until configured.
+          Scores computed live on each visit. Reddit requires API credentials to be configured.
         </p>
       </div>
     </div>

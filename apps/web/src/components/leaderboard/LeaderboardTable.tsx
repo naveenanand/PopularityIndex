@@ -57,7 +57,6 @@ export function LeaderboardTable({ entries }: Props) {
               <td className="py-3 pr-4">
                 <Link href={`/people/${entry.wikidataQid}`} className="flex items-center gap-2.5 group">
                   {entry.photoUrl ? (
-                    // eslint-disable-next-line @next/next/no-img-element
                     <img
                       src={entry.photoUrl}
                       alt={entry.displayName}
