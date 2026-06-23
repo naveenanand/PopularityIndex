@@ -9,7 +9,7 @@
   "scripts": {
     "dev": "pnpm --filter @pai/web dev",
     "build": "pnpm -r --workspace-concurrency=1 build",
-    "test": "vitest run --workspace vitest.workspace.ts",
+    "test": "vitest run",
     "lint": "eslint .",
     "typecheck": "pnpm -r --workspace-concurrency=1 typecheck",
     "db:migrate": "pnpm --filter @pai/db migrate",

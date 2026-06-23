@@ -24,7 +24,7 @@ console.log('Starting Wikipedia ingestion...');
 console.log(`  Days: ${days}, Concurrency: ${concurrency}`);
 if (personIds?.length) console.log(`  Filtering to person IDs: ${personIds.join(', ')}`);
 
-runWikipediaIngestJob({ personIds, days, concurrency })
+runWikipediaIngestJob({ ...(personIds ? { personIds } : {}), days, concurrency })
   .then(() => process.exit(0))
   .catch((err) => {
     console.error('Ingestion failed:', err);

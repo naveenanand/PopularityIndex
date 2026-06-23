@@ -31,7 +31,7 @@ export function makeScoresRepository(db: Db) {
           controversyScore: data.controversyScore,
           coverageScore: data.coverageScore,
           confidenceScore: data.confidenceScore,
-          explanationJson: data.explanationJson as Record<string, unknown>,
+          explanationJson: data.explanationJson as unknown as Record<string, unknown>,
         })
         .returning();
       return snapshot;

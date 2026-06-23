@@ -83,8 +83,8 @@ export async function runWikipediaIngestJob(options: IngestJobOptions = {}): Pro
                   metricType: obs.metricType,
                   metricValue: obs.metricValue,
                   observedAt: obs.observedAt,
-                  payloadJson: obs.payload,
-                  reliabilityScore: obs.reliabilityScore,
+                  ...(obs.payload ? { payloadJson: obs.payload } : {}),
+                  ...(obs.reliabilityScore !== undefined ? { reliabilityScore: obs.reliabilityScore } : {}),
                 });
               }
             }
@@ -107,8 +107,8 @@ export async function runWikipediaIngestJob(options: IngestJobOptions = {}): Pro
                 metricType: obs.metricType,
                 metricValue: obs.metricValue,
                 observedAt: obs.observedAt,
-                payloadJson: obs.payload,
-                reliabilityScore: obs.reliabilityScore,
+                ...(obs.payload ? { payloadJson: obs.payload } : {}),
+                ...(obs.reliabilityScore !== undefined ? { reliabilityScore: obs.reliabilityScore } : {}),
               });
             }
 
@@ -129,8 +129,8 @@ export async function runWikipediaIngestJob(options: IngestJobOptions = {}): Pro
                 metricType: obs.metricType,
                 metricValue: obs.metricValue,
                 observedAt: obs.observedAt,
-                payloadJson: obs.payload,
-                reliabilityScore: obs.reliabilityScore,
+                ...(obs.payload ? { payloadJson: obs.payload } : {}),
+                ...(obs.reliabilityScore !== undefined ? { reliabilityScore: obs.reliabilityScore } : {}),
               });
             }
 

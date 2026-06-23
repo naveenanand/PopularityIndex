@@ -1,5 +1,7 @@
 # Public Attention Index (PAI)
 
+[![CI](https://github.com/naveenanand/PopularityIndex/actions/workflows/ci.yml/badge.svg)](https://github.com/naveenanand/PopularityIndex/actions/workflows/ci.yml)
+
 PAI assigns a transparent public-attention score to people with Wikipedia biographies. It measures public visibility and attention — not talent, moral worth, or personal value.
 
 ## Prerequisites
@@ -15,7 +17,7 @@ PAI assigns a transparent public-attention score to people with Wikipedia biogra
 npm install -g pnpm@9
 
 # 2. Clone the repo and install dependencies
-git clone <repo-url>
+git clone https://github.com/naveenanand/PopularityIndex.git
 cd PopularityIndex
 pnpm install
 
