@@ -183,6 +183,7 @@ export async function getPersonPhoto(displayName: string): Promise<string | null
   try {
     const res = await fetch(`https://en.wikipedia.org/api/rest_v1/page/summary/${title}`, {
       headers: { 'User-Agent': WIKIMEDIA_UA },
+      signal: AbortSignal.timeout(5000),
       next: { revalidate: 86400 },
     });
     if (!res.ok) return null;

@@ -1,5 +1,4 @@
 import Link from 'next/link';
-import Image from 'next/image';
 import type { LeaderboardEntry } from '../../lib/api';
 import { formatScore, coverageBadgeColor } from '../../lib/formatters';
 
@@ -58,11 +57,10 @@ export function LeaderboardTable({ entries }: Props) {
               <td className="py-3 pr-4">
                 <Link href={`/people/${entry.wikidataQid}`} className="flex items-center gap-2.5 group">
                   {entry.photoUrl ? (
-                    <Image
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img
                       src={entry.photoUrl}
                       alt={entry.displayName}
-                      width={32}
-                      height={32}
                       className="flex-shrink-0 w-8 h-8 rounded-full object-cover border border-gray-200"
                     />
                   ) : (

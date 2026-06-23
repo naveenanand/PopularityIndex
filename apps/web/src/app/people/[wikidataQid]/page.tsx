@@ -1,5 +1,4 @@
 import { notFound } from 'next/navigation';
-import Image from 'next/image';
 import Link from 'next/link';
 import { getPersonWithScores, getPersonPhoto, getPersonTopArticles } from '../../../lib/api';
 import { ScoreHistoryChart } from '../../../components/person/ScoreHistoryChart';
@@ -32,11 +31,10 @@ export default async function PersonPage({ params }: PageProps) {
       <div className="flex items-start justify-between flex-wrap gap-4">
         <div className="flex items-center gap-4">
           {photoUrl ? (
-            <Image
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
               src={photoUrl}
               alt={person.displayName}
-              width={72}
-              height={72}
               className="rounded-full object-cover w-16 h-16 border border-gray-200 shadow-sm flex-shrink-0"
             />
           ) : (
