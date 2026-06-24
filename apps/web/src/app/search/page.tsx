@@ -1,4 +1,4 @@
-﻿import Link from 'next/link';
+import Link from 'next/link';
 import { Suspense } from 'react';
 import { SearchBar } from '../../components/shared/SearchBar';
 import { searchPeople } from '../../lib/api';
@@ -10,32 +10,32 @@ async function SearchResults({ query }: { query: string }) {
 
   if (results.length === 0) {
     return (
-      <div className="text-center py-12 text-gray-500">
-        <p className="font-medium">No results found for &ldquo;{query}&rdquo;</p>
-        <p className="text-sm mt-1">Try a different name or spelling.</p>
+      <div className="text-center py-12 text-zinc-500">
+        <p className="font-medium">No results for &ldquo;{query}&rdquo;</p>
+        <p className="text-sm mt-1 text-zinc-600">Try a different name or spelling.</p>
       </div>
     );
   }
 
   return (
-    <ul className="divide-y divide-gray-100">
+    <ul className="divide-y divide-zinc-800">
       {results.map((person) => (
         <li key={person.id}>
           <Link
             href={`/people/${person.wikidataQid}`}
-            className="flex items-center justify-between py-3 px-2 rounded hover:bg-gray-50 transition-colors group"
+            className="flex items-center justify-between py-3 px-2 rounded-lg hover:bg-zinc-800 transition-colors group"
           >
             <div>
-              <span className="font-medium text-gray-900 group-hover:text-indigo-600">
+              <span className="font-medium text-zinc-100 group-hover:text-white">
                 {person.displayName}
               </span>
               {person.occupationSummary && (
-                <span className="text-sm text-gray-400 capitalize ml-2">
+                <span className="text-sm text-zinc-500 capitalize ml-2">
                   {person.occupationSummary.replace(/_/g, ' ')}
                 </span>
               )}
             </div>
-            <span className="text-xs font-mono text-gray-300">{person.wikidataQid}</span>
+            <span className="text-xs font-mono text-zinc-600">{person.wikidataQid}</span>
           </Link>
         </li>
       ))}
@@ -48,26 +48,26 @@ export default async function SearchPage({ searchParams }: { searchParams: Searc
   const query = q?.trim() ?? '';
 
   return (
-    <div className="max-w-2xl mx-auto space-y-6">
+    <div className="max-w-2xl mx-auto px-4 py-10 space-y-6">
       <div>
-        <h1 className="text-2xl font-bold text-gray-900 mb-1">Search</h1>
-        <p className="text-gray-500 text-sm">Find public figures in the PAI database</p>
+        <h1 className="text-2xl font-bold text-white mb-1">Search</h1>
+        <p className="text-zinc-500 text-sm">Find public figures in the PAI database</p>
       </div>
 
       <SearchBar defaultValue={query} placeholder="Search by name..." />
 
       {query.length >= 2 ? (
-        <div className="bg-white rounded-xl border border-gray-200 p-4 shadow-sm">
+        <div className="bg-zinc-900 rounded-xl border border-zinc-800 p-4">
           <Suspense
             fallback={
-              <div className="py-8 text-center text-gray-400 text-sm">Searching...</div>
+              <div className="py-8 text-center text-zinc-500 text-sm">Searching...</div>
             }
           >
             <SearchResults query={query} />
           </Suspense>
         </div>
       ) : (
-        <div className="text-center py-12 text-gray-400 text-sm">
+        <div className="text-center py-12 text-zinc-600 text-sm">
           Type at least 2 characters to search
         </div>
       )}
