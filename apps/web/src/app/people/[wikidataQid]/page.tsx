@@ -1,12 +1,16 @@
+import { Suspense } from 'react';
 import { notFound } from 'next/navigation';
 import Link from 'next/link';
-import { getPersonWithScores, getPersonTrendingReason } from '../../../lib/api';
+import { getPersonWithScores } from '../../../lib/api';
 import { ScoreHistoryChart } from '../../../components/person/ScoreHistoryChart';
 import { DataSourceBadge } from '../../../components/shared/DataSourceBadge';
+import { NewsSection, NewsSectionSkeleton } from '../../../components/person/NewsSection';
 import { formatDate, formatScore, coverageBadgeColor } from '../../../lib/formatters';
 import type { ScoreExplanation } from '@pai/shared';
 
-export const revalidate = 300; // 5 min cache — trending data changes with cron
+// Core page is cached 1 hour — scores and bio don't change often.
+// The NewsSection streams in separately via Suspense so it never blocks the initial HTML.
+export const revalidate = 3600;
 
 interface PageProps {
   params: Promise<{ wikidataQid: string }>;
@@ -15,7 +19,6 @@ interface PageProps {
 export default async function PersonPage({ params }: PageProps) {
   const { wikidataQid } = await params;
 
-  // Fetch person from DB first (lightweight — just id + displayName needed for trending call)
   const data = await getPersonWithScores(wikidataQid);
   if (!data) return notFound();
 
@@ -23,10 +26,6 @@ export default async function PersonPage({ params }: PageProps) {
   const photoUrl = person.photoUrl;
   const occupation = person.occupationSummary?.replace(/_/g, ' ') ?? '';
   const explanation = latestScore?.explanationJson as ScoreExplanation | undefined;
-
-  // Fetch trending reason with displayName so the GDELT fallback can run if needed.
-  // Single DB query for all cache keys; GDELT capped at 3s if caches are empty.
-  const trendingReasonFinal = await getPersonTrendingReason(person.displayName, wikidataQid).catch(() => null);
 
   return (
     <div className="min-h-screen">
@@ -41,7 +40,7 @@ export default async function PersonPage({ params }: PageProps) {
         <div className="absolute inset-0 bg-gradient-to-r from-[#0a0a0a]/80 to-transparent" />
       </div>
 
-      {/* Content — overlaps the hero */}
+      {/* Content */}
       <div className="max-w-3xl mx-auto px-4 sm:px-6 -mt-24 relative z-10 space-y-6 pb-16">
 
         {/* Person header */}
@@ -85,7 +84,7 @@ export default async function PersonPage({ params }: PageProps) {
           </div>
         </div>
 
-        {/* Score cards — from DB, no live GDELT call */}
+        {/* Score cards — from DB */}
         {latestScore ? (
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
             <div className="bg-zinc-900 rounded-2xl border border-zinc-800 p-4 text-center">
@@ -111,56 +110,14 @@ export default async function PersonPage({ params }: PageProps) {
           </div>
         ) : (
           <div className="bg-zinc-900 rounded-2xl border border-zinc-800 p-6 text-center text-zinc-500 text-sm">
-            No score computed yet. Run <code className="text-xs bg-zinc-800 px-1 rounded">pnpm score:calculate</code> to generate scores.
+            No score computed yet.
           </div>
         )}
 
-        {/* Why Trending + Source Articles — from cache, falls back to live GDELT */}
-        {trendingReasonFinal && (
-          <div className="bg-zinc-900 rounded-2xl border border-zinc-800 p-6 space-y-4">
-            <div className="flex items-center gap-2">
-              <span className="text-lg">🔥</span>
-              <h2 className="font-bold text-white">Why They&apos;re Trending</h2>
-              <span className="ml-auto text-xs text-zinc-500 bg-zinc-800 px-2 py-0.5 rounded-full">
-                {trendingReasonFinal.timespan}
-              </span>
-            </div>
-
-            <ul className="space-y-2">
-              {trendingReasonFinal.bullets.map((bullet, i) => (
-                <li key={i} className="flex items-start gap-2 text-sm text-zinc-300">
-                  <span className="text-red-500 mt-0.5 flex-shrink-0">•</span>
-                  <span>{bullet}</span>
-                </li>
-              ))}
-            </ul>
-
-            {trendingReasonFinal.articles.length > 0 && (
-              <div className="border-t border-zinc-800 pt-4 space-y-2">
-                <p className="text-xs font-semibold text-zinc-500 uppercase tracking-wide">Source Articles</p>
-                <ul className="space-y-3">
-                  {trendingReasonFinal.articles.map((article, i) => (
-                    <li key={i}>
-                      <a
-                        href={article.url}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="group flex items-start gap-2 text-sm hover:text-white transition-colors"
-                      >
-                        <span className="text-red-500/50 group-hover:text-red-400 mt-0.5 flex-shrink-0">↗</span>
-                        <span className="text-zinc-400 group-hover:text-zinc-200 flex-1 leading-snug">
-                          {article.title}
-                        </span>
-                        <span className="text-zinc-600 text-xs flex-shrink-0 mt-0.5">{article.domain}</span>
-                      </a>
-                    </li>
-                  ))}
-                </ul>
-                <p className="text-[10px] text-zinc-700 pt-1">Source: GDELT Project</p>
-              </div>
-            )}
-          </div>
-        )}
+        {/* News + Why Trending — streams in via Suspense, never blocks initial render */}
+        <Suspense fallback={<NewsSectionSkeleton />}>
+          <NewsSection displayName={person.displayName} wikidataQid={wikidataQid} />
+        </Suspense>
 
         {/* Score history */}
         <div className="bg-zinc-900 rounded-2xl border border-zinc-800 p-6">
@@ -173,7 +130,7 @@ export default async function PersonPage({ params }: PageProps) {
           <ScoreHistoryChart history={scoreHistory} />
         </div>
 
-        {/* Signal breakdown — from explanation JSON in DB */}
+        {/* Signal breakdown */}
         {explanation && (
           <div className="bg-zinc-900 rounded-2xl border border-zinc-800 p-6 space-y-3">
             <h2 className="font-bold text-white text-sm">Score Breakdown</h2>
@@ -218,7 +175,7 @@ export default async function PersonPage({ params }: PageProps) {
             ))}
           </div>
           <p className="text-xs text-zinc-600 mt-2">
-            Scores computed by daily job. News data cached via GDELT trending cron.
+            Scores updated daily. News cached by trending cron.
           </p>
         </div>
       </div>
