@@ -1,7 +1,7 @@
 import { Suspense } from 'react';
 import { notFound } from 'next/navigation';
 import Link from 'next/link';
-import { getPersonWithScores, getPersonPhoto } from '../../../lib/api';
+import { getPersonWithScores } from '../../../lib/api';
 import { ScoreHistoryChart } from '../../../components/person/ScoreHistoryChart';
 import { DataSourceBadge } from '../../../components/shared/DataSourceBadge';
 import { LiveScoreSection, LiveScoreSkeleton } from '../../../components/person/LiveScoreSection';
@@ -20,7 +20,7 @@ export default async function PersonPage({ params }: PageProps) {
   if (!data) return notFound();
 
   const { person, scoreHistory } = data;
-  const photoUrl = await getPersonPhoto(person.displayName);
+  const photoUrl = person.photoUrl;
   const occupation = person.occupationSummary?.replace(/_/g, ' ') ?? '';
 
   return (

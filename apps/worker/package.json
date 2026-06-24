@@ -12,7 +12,8 @@
     "expand:people": "tsx src/commands/expand-people.ts",
     "update:photos": "tsx src/commands/update-photos.ts",
     "bulk:import": "tsx src/commands/bulk-import.ts",
-    "bulk:import:1m": "tsx src/commands/bulk-import-1m.ts"
+    "bulk:import:1m": "tsx src/commands/bulk-import-1m.ts",
+    "update:trending": "tsx src/commands/update-trending.ts"
   },
   "dependencies": {
     "@pai/db": "workspace:*",
