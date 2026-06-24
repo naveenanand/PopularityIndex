@@ -350,11 +350,11 @@ export async function getTrendingLeaderboard(
   return data.slice(0, limit);
 }
 
-export async function getPersonTopArticles(displayName: string): Promise<NewsArticle[]> {
+export async function getPersonTopArticles(displayName: string, maxRecords = 5): Promise<NewsArticle[]> {
   const params = new URLSearchParams({
     query: `"${displayName}"`,
     mode: 'artlist',
-    maxrecords: '3',
+    maxrecords: String(maxRecords),
     format: 'json',
     timespan: '10080', // 7d in minutes
     sort: 'DateDesc',
@@ -367,8 +367,81 @@ export async function getPersonTopArticles(displayName: string): Promise<NewsArt
     });
     if (!res.ok) return [];
     const data = (await res.json()) as { articles?: NewsArticle[] };
-    return data.articles?.slice(0, 3) ?? [];
+    return data.articles?.slice(0, maxRecords) ?? [];
   } catch {
     return [];
   }
+}
+
+export interface TrendingReason {
+  articleCount: number;
+  timespan: string;
+  bullets: string[];
+  articles: NewsArticle[];
+}
+
+// Fetch GDELT articles for a person and build a "why trending" summary.
+// Uses cached trending article data when available, falls back to live GDELT.
+export async function getPersonTrendingReason(
+  displayName: string,
+  wikidataQid: string,
+): Promise<TrendingReason | null> {
+  const conn = await db();
+
+  // Check all trending caches for pre-fetched articles stored during update:trending
+  if (conn) {
+    for (const timespan of ['1h', '24h', '30d'] as const) {
+      const rows = await conn
+        .select({ data: cacheEntries.data })
+        .from(cacheEntries)
+        .where(eq(cacheEntries.key, `trending:${timespan}`))
+        .limit(1);
+      if (!rows[0]) continue;
+
+      const cached = rows[0].data as Array<{
+        wikidataQid: string;
+        articleCount: number;
+        trendingArticles?: NewsArticle[];
+      }>;
+      const entry = cached.find(e => e.wikidataQid === wikidataQid);
+      if (entry && entry.trendingArticles && entry.trendingArticles.length > 0) {
+        const timespanLabel = timespan === '1h' ? 'last hour' : timespan === '24h' ? 'last 24 hours' : 'last 30 days';
+        return {
+          articleCount: entry.articleCount,
+          timespan: timespanLabel,
+          bullets: buildBullets(entry.articleCount, timespanLabel, entry.trendingArticles),
+          articles: entry.trendingArticles,
+        };
+      }
+    }
+  }
+
+  // Fall back to a live GDELT query
+  const articles = await getPersonTopArticles(displayName, 5);
+  if (articles.length === 0) return null;
+
+  return {
+    articleCount: articles.length,
+    timespan: 'last 7 days',
+    bullets: buildBullets(articles.length, 'last 7 days', articles),
+    articles,
+  };
+}
+
+function buildBullets(count: number, timespan: string, articles: NewsArticle[]): string[] {
+  const bullets: string[] = [];
+  bullets.push(`Mentioned in ${count} news article${count !== 1 ? 's' : ''} in the ${timespan}`);
+
+  const domains = [...new Set(articles.map(a => a.domain))].slice(0, 3);
+  if (domains.length > 0) {
+    bullets.push(`Covered by: ${domains.join(', ')}`);
+  }
+
+  // Add article title previews (up to 3, truncated at 80 chars)
+  for (const article of articles.slice(0, 3)) {
+    const title = article.title.length > 80 ? article.title.slice(0, 77) + '…' : article.title;
+    bullets.push(title);
+  }
+
+  return bullets;
 }

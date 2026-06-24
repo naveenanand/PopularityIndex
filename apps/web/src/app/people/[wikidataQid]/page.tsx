@@ -1,7 +1,7 @@
 import { Suspense } from 'react';
 import { notFound } from 'next/navigation';
 import Link from 'next/link';
-import { getPersonWithScores } from '../../../lib/api';
+import { getPersonWithScores, getPersonTrendingReason } from '../../../lib/api';
 import { ScoreHistoryChart } from '../../../components/person/ScoreHistoryChart';
 import { DataSourceBadge } from '../../../components/shared/DataSourceBadge';
 import { LiveScoreSection, LiveScoreSkeleton } from '../../../components/person/LiveScoreSection';
@@ -20,6 +20,9 @@ export default async function PersonPage({ params }: PageProps) {
   if (!data) return notFound();
 
   const { person, scoreHistory } = data;
+
+  // Fetch trending reason in parallel after we have the person's display name
+  const trendingReasonFinal = await getPersonTrendingReason(person.displayName, wikidataQid).catch(() => null);
   const photoUrl = person.photoUrl;
   const occupation = person.occupationSummary?.replace(/_/g, ' ') ?? '';
 
@@ -85,6 +88,54 @@ export default async function PersonPage({ params }: PageProps) {
         <Suspense fallback={<LiveScoreSkeleton />}>
           <LiveScoreSection personId={person.id} displayName={person.displayName} />
         </Suspense>
+
+        {/* Why Trending */}
+        {trendingReasonFinal && (
+          <div className="bg-zinc-900 rounded-2xl border border-zinc-800 p-6 space-y-4">
+            <div className="flex items-center gap-2">
+              <span className="text-lg">🔥</span>
+              <h2 className="font-bold text-white">Why They&apos;re Trending</h2>
+              <span className="ml-auto text-xs text-zinc-500 bg-zinc-800 px-2 py-0.5 rounded-full">
+                {trendingReasonFinal.timespan}
+              </span>
+            </div>
+
+            {/* Summary bullets */}
+            <ul className="space-y-2">
+              {trendingReasonFinal.bullets.map((bullet, i) => (
+                <li key={i} className="flex items-start gap-2 text-sm text-zinc-300">
+                  <span className="text-red-500 mt-0.5 flex-shrink-0">•</span>
+                  <span>{bullet}</span>
+                </li>
+              ))}
+            </ul>
+
+            {/* Source articles */}
+            {trendingReasonFinal.articles.length > 0 && (
+              <div className="border-t border-zinc-800 pt-4 space-y-2">
+                <p className="text-xs font-semibold text-zinc-500 uppercase tracking-wide">Source Articles</p>
+                <ul className="space-y-2">
+                  {trendingReasonFinal.articles.map((article, i) => (
+                    <li key={i}>
+                      <a
+                        href={article.url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="group flex items-start gap-2 text-sm hover:text-white transition-colors"
+                      >
+                        <span className="text-red-500/50 group-hover:text-red-400 mt-0.5 flex-shrink-0">↗</span>
+                        <span className="text-zinc-400 group-hover:text-zinc-200 flex-1 leading-snug">
+                          {article.title}
+                        </span>
+                        <span className="text-zinc-600 text-xs flex-shrink-0 mt-0.5">{article.domain}</span>
+                      </a>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+          </div>
+        )}
 
         {/* Score history */}
         <div className="bg-zinc-900 rounded-2xl border border-zinc-800 p-6">
