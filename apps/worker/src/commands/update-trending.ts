@@ -40,11 +40,11 @@ interface ScoredPerson {
   calculatedAt: Date;
 }
 
-// Use named units — numeric minutes are unreliable beyond ~7 days in GDELT artlist
+// GDELT artlist timespan in minutes (artlist only accepts integers, not named units)
 const GDELT_TIMESPANS: Record<string, string> = {
-  '1h':  '1h',
-  '24h': '24h',
-  '30d': '30d',
+  '1h':  '60',
+  '24h': '1440',
+  '30d': '20160', // 14 days — 30d (43200) hits complexity limits with long OR chains
 };
 
 const BATCH_SIZE = 25;
@@ -295,7 +295,7 @@ console.log(`[news_by_person] Stored news for ${Object.keys(newsByPerson).length
 console.log('\n[news_feed] Fetching...');
 await delay(RATE_LIMIT_MS);
 const top8Names = scoredPeople.slice(0, 8).map(p => `"${p.displayName}"`).join(' OR ');
-const feedArticles = await fetchGDELTArticles(top8Names, '24h');
+const feedArticles = await fetchGDELTArticles(top8Names, '1440');
 
 const feed = feedArticles.slice(0, 20).map(a => {
   const titleLower = a.title.toLowerCase();

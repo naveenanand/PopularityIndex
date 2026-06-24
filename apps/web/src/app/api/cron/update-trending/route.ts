@@ -17,12 +17,11 @@ export const dynamic = 'force-dynamic';
 
 const UA = process.env['WIKIMEDIA_USER_AGENT'] ?? 'PopularityIndex/0.1.0';
 
-// GDELT artlist timespan: use named units for longer windows
-// (numeric minutes are capped around 7 days in GDELT's artlist API)
+// GDELT artlist timespan in minutes (artlist only accepts integers)
 const GDELT_TIMESPANS: Record<string, string> = {
-  '1h':  '1h',
-  '24h': '24h',
-  '30d': '30d',
+  '1h':  '60',
+  '24h': '1440',
+  '30d': '20160', // 14 days — 30d (43200) can hit query-complexity limits with long OR chains
 };
 
 const DISCOVERY_QUERY =
@@ -236,7 +235,7 @@ export async function GET(request: Request) {
 
   // News feed: concurrent fetch for top 8 people names
   const top8Query = scoredPeople.slice(0, 8).map(p => `"${p.displayName}"`).join(' OR ');
-  const feedArticles = await fetchGDELT(top8Query, '24h');
+  const feedArticles = await fetchGDELT(top8Query, '1440');
   const feed = feedArticles.slice(0, 20).map(a => {
     const tl = a.title.toLowerCase();
     const matched = scoredPeople.find(p => tl.includes(p.displayName.toLowerCase())) ?? scoredPeople[0]!;
