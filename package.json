@@ -20,6 +20,7 @@
     "update:photos": "pnpm --filter @pai/worker update:photos",
     "bulk:import": "pnpm --filter @pai/worker bulk:import",
     "bulk:import:1m": "pnpm --filter @pai/worker bulk:import:1m",
+    "bulk:import:wp": "pnpm --filter @pai/worker bulk:import:wp",
     "update:trending": "pnpm --filter @pai/worker update:trending"
   },
   "devDependencies": {

@@ -22,9 +22,9 @@ if (envPath) config({ path: envPath });
 
 const SPARQL_BASE = process.env['WIKIDATA_SPARQL_BASE'] ?? 'https://query.wikidata.org';
 const USER_AGENT = process.env['WIKIMEDIA_USER_AGENT'] ?? 'PopularityIndex/0.1.0 bulk-import-1m';
-const SPARQL_LIMIT = 10_000;
+const SPARQL_LIMIT = 5_000;
 const UPSERT_BATCH = 200;
-const DELAY_MS = 1_500; // polite delay between SPARQL calls
+const DELAY_MS = 3_000; // polite delay between SPARQL calls
 
 const targetArg = parseInt(process.argv[2] ?? '1000000', 10);
 const TARGET = isNaN(targetArg) ? 1_000_000 : targetArg;
@@ -37,19 +37,17 @@ interface SparqlBinding {
 }
 
 function buildPrefixQuery(prefix: string): string {
-  const filterClause = prefix
-    ? `FILTER(LANG(?name) = "en" && STRSTARTS(UCASE(?name), ${JSON.stringify(prefix.toUpperCase())}))`
-    : `FILTER(LANG(?name) = "en")`;
-
+  // Avoid the slow schema:isPartOf join. Use wikibase:sitelinks >= 3 as a proxy
+  // for "notable enough to appear on Wikipedia." Much faster, far fewer 504s.
   return `
 SELECT ?wikidataQid ?name WHERE {
-  ?person wdt:P31 wd:Q5 .
-  ?enwiki schema:about ?person ;
-          schema:isPartOf <https://en.wikipedia.org/> .
-  ?person rdfs:label ?name .
-  ${filterClause}
+  ?person wdt:P31 wd:Q5 ;
+          wikibase:sitelinks ?sl ;
+          rdfs:label ?name .
+  FILTER(LANG(?name) = "en" && STRSTARTS(UCASE(?name), ${JSON.stringify(prefix.toUpperCase())}) && ?sl >= 3)
   BIND(REPLACE(STR(?person), "http://www.wikidata.org/entity/", "") AS ?wikidataQid)
 }
+ORDER BY DESC(?sl)
 LIMIT ${SPARQL_LIMIT}
 `.trim();
 }
@@ -64,8 +62,8 @@ async function sparqlFetch(prefix: string, attempt = 1): Promise<Array<{ wikidat
       signal: AbortSignal.timeout(90_000),
     });
   } catch (err) {
-    if (attempt < 3) {
-      const wait = attempt * 15_000;
+    if (attempt < 4) {
+      const wait = attempt * 30_000; // 30s, 60s, 90s
       console.warn(`  [prefix "${prefix}"] network error, retry ${attempt}/3 in ${wait / 1000}s: ${String(err).split('\n')[0]}`);
       await new Promise(r => setTimeout(r, wait));
       return sparqlFetch(prefix, attempt + 1);
@@ -74,8 +72,8 @@ async function sparqlFetch(prefix: string, attempt = 1): Promise<Array<{ wikidat
   }
 
   if (!res.ok) {
-    if ((res.status === 429 || res.status === 503 || res.status === 504) && attempt < 3) {
-      const wait = attempt * 20_000;
+    if ((res.status === 429 || res.status === 503 || res.status === 504) && attempt < 4) {
+      const wait = attempt * 30_000; // 30s, 60s, 90s
       console.warn(`  [prefix "${prefix}"] HTTP ${res.status}, retry ${attempt}/3 in ${wait / 1000}s`);
       await new Promise(r => setTimeout(r, wait));
       return sparqlFetch(prefix, attempt + 1);
