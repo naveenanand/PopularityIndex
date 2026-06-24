@@ -5,7 +5,8 @@
  * Usage:
  *   pnpm bulk:import            # import up to 10 000 people
  *   pnpm bulk:import 50000      # import up to 50 000
- *   pnpm bulk:import 1000000    # import up to 1 000 000 (very slow — run overnight)
+ *
+ * For 1M+ records use: pnpm bulk:import:1m
  */
 
 import { findUp } from 'find-up';
@@ -41,7 +42,7 @@ OFFSET ${offset}
 `.trim();
 }
 
-async function fetchPage(offset: number): Promise<Array<{ wikidataQid: string; displayName: string; occupation?: string }>> {
+async function fetchPage(offset: number): Promise<Array<{ wikidataQid: string; displayName: string }>> {
   const query = buildQuery(offset, PAGE_SIZE);
   const url = `${SPARQL_BASE}/sparql?query=${encodeURIComponent(query)}&format=json`;
   const res = await fetch(url, {
@@ -98,7 +99,6 @@ try {
       break;
     }
 
-    // Upsert in small batches
     for (let i = 0; i < candidates.length; i += UPSERT_BATCH) {
       const batch = candidates.slice(i, i + UPSERT_BATCH);
       const results = await Promise.allSettled(
@@ -107,7 +107,6 @@ try {
             wikidataQid: p.wikidataQid,
             displayName: p.displayName,
             normalizedName: p.displayName.toLowerCase(),
-            ...(p.occupation ? { occupationSummary: p.occupation } : {}),
           }),
         ),
       );
@@ -125,7 +124,6 @@ try {
       break;
     }
 
-    // Polite delay between SPARQL pages to avoid rate limiting
     await new Promise(r => setTimeout(r, 2_000));
   }
 
