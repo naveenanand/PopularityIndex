@@ -1,9 +1,14 @@
 /**
- * Reverse-lookup trending: fetch GDELT articles first, match against DB.
- * 1 GDELT call per timespan (vs. 50+ in the old approach) — works across all 100k people.
+ * Trending cron — batch name approach:
+ *
+ * Fetches top 100 scored people, batches their names into OR queries (20/batch),
+ * runs 5 concurrent GDELT calls per timespan (fine on Vercel's clean IPs),
+ * deduplicates articles, counts per person in JS, stores top 50 in cache.
+ *
+ * Also runs a broad "discovery" query to catch newsworthy unscored people.
  */
 import { NextResponse } from 'next/server';
-import { eq, sql } from 'drizzle-orm';
+import { desc, eq, and, sql } from 'drizzle-orm';
 import { people, scoreSnapshots, cacheEntries } from '@pai/db';
 import { db } from '../../../../lib/db';
 
@@ -18,6 +23,9 @@ const GDELT_TIMESPANS: Record<string, string> = {
   '30d': '43200',
 };
 
+const DISCOVERY_QUERY =
+  'president OR minister OR senator OR CEO OR actor OR singer OR athlete OR champion OR arrested OR elected OR appointed';
+
 interface GDELTArticle {
   title: string;
   url: string;
@@ -25,11 +33,23 @@ interface GDELTArticle {
   seendate: string;
 }
 
-async function fetchGDELTArticles(gdeltMinutes: string, maxRecords = 250): Promise<GDELTArticle[]> {
+interface ScoredPerson {
+  wikidataQid: string;
+  displayName: string;
+  photoUrl: string | null;
+  occupationSummary: string | null;
+  popularityScore: number;
+  heatScore: number;
+  coverageScore: number;
+  scoreModelVersion: string;
+  calculatedAt: Date;
+}
+
+async function fetchGDELT(query: string, gdeltMinutes: string): Promise<GDELTArticle[]> {
   const params = new URLSearchParams({
-    query: 'sourcelang:English',
+    query,
     mode: 'artlist',
-    maxrecords: String(maxRecords),
+    maxrecords: '250',
     format: 'json',
     timespan: gdeltMinutes,
     sort: 'DateDesc',
@@ -41,11 +61,17 @@ async function fetchGDELTArticles(gdeltMinutes: string, maxRecords = 250): Promi
       cache: 'no-store',
     });
     if (!res.ok) return [];
-    const data = (await res.json()) as { articles?: GDELTArticle[] };
+    const text = await res.text();
+    if (!text.startsWith('{') && !text.startsWith('[')) return [];
+    const data = JSON.parse(text) as { articles?: GDELTArticle[] };
     return data.articles ?? [];
   } catch {
     return [];
   }
+}
+
+function dedupe(arts: GDELTArticle[]): GDELTArticle[] {
+  return [...new Map(arts.map(a => [a.url, a])).values()];
 }
 
 export async function GET(request: Request) {
@@ -58,100 +84,7 @@ export async function GET(request: Request) {
   const conn = await db();
   if (!conn) return NextResponse.json({ error: 'No DB' }, { status: 500 });
 
-  const results: Record<string, number> = {};
-
-  for (const [timespan, gdeltMinutes] of Object.entries(GDELT_TIMESPANS)) {
-    const articles = await fetchGDELTArticles(gdeltMinutes);
-    if (articles.length === 0) {
-      results[timespan] = 0;
-      continue;
-    }
-
-    // Concatenate all article titles — PostgreSQL will search this corpus
-    const corpus = articles.map(a => a.title).join(' § ');
-
-    // Match people whose full display name (>=8 chars to avoid false positives) appears in the corpus
-    const rows = await conn.execute(sql`
-      SELECT
-        p.id,
-        p.wikidata_qid,
-        p.display_name,
-        p.photo_url,
-        p.occupation_summary,
-        COALESCE(ss.popularity_score, 0)       AS popularity_score,
-        COALESCE(ss.heat_score, 0)             AS heat_score,
-        COALESCE(ss.coverage_score, 0)         AS coverage_score,
-        COALESCE(ss.score_model_version, 'v1') AS score_model_version,
-        COALESCE(ss.calculated_at, NOW())      AS calculated_at
-      FROM people p
-      LEFT JOIN LATERAL (
-        SELECT popularity_score, heat_score, coverage_score, score_model_version, calculated_at
-        FROM score_snapshots
-        WHERE person_id = p.id
-        ORDER BY calculated_at DESC
-        LIMIT 1
-      ) ss ON true
-      WHERE
-        length(p.display_name) >= 8
-        AND position(lower(p.display_name) IN lower(${corpus})) > 0
-      LIMIT 300
-    `);
-
-    type Row = Record<string, unknown>;
-    const trending: Array<{
-      rank: number;
-      wikidataQid: string;
-      displayName: string;
-      photoUrl: string | null;
-      occupationSummary: string | null;
-      popularityScore: number;
-      heatScore: number;
-      coverageScore: number;
-      coverageLabel: string;
-      scoreModelVersion: string;
-      calculatedAt: Date;
-      articleCount: number;
-      trendingArticles: GDELTArticle[];
-    }> = [];
-
-    for (const row of rows as unknown as Row[]) {
-      const name = String(row['display_name']).toLowerCase();
-      const matched = articles.filter(a => a.title.toLowerCase().includes(name));
-      if (matched.length === 0) continue;
-      trending.push({
-        rank:               0,
-        wikidataQid:        String(row['wikidata_qid']),
-        displayName:        String(row['display_name']),
-        photoUrl:           row['photo_url'] ? String(row['photo_url']) : null,
-        occupationSummary:  row['occupation_summary'] ? String(row['occupation_summary']) : null,
-        popularityScore:    Number(row['popularity_score']),
-        heatScore:          Number(row['heat_score']),
-        coverageScore:      Number(row['coverage_score']),
-        coverageLabel:      'Partial coverage',
-        scoreModelVersion:  String(row['score_model_version']),
-        calculatedAt:       new Date(String(row['calculated_at'])),
-        articleCount:       matched.length,
-        trendingArticles:   matched.slice(0, 5),
-      });
-    }
-
-    const sorted = trending
-      .sort((a, b) => b.articleCount - a.articleCount)
-      .slice(0, 50)
-      .map((e, i) => ({ ...e, rank: i + 1 }));
-
-    await conn
-      .insert(cacheEntries)
-      .values({ key: `trending:${timespan}`, data: sorted, updatedAt: new Date() })
-      .onConflictDoUpdate({
-        target: cacheEntries.key,
-        set: { data: sorted, updatedAt: new Date() },
-      });
-
-    results[timespan] = sorted.length;
-  }
-
-  // News feed — use the 24h article batch to build a feed linked to top scored people
+  // Get top 100 scored people (most likely to be in news)
   const latestScores = conn
     .select({
       personId: scoreSnapshots.personId,
@@ -161,24 +94,112 @@ export async function GET(request: Request) {
     .groupBy(scoreSnapshots.personId)
     .as('latest_scores');
 
-  const topPeople = await conn
-    .select({ wikidataQid: people.wikidataQid, displayName: people.displayName })
+  const scoredPeople: ScoredPerson[] = await conn
+    .select({
+      wikidataQid: people.wikidataQid,
+      displayName: people.displayName,
+      photoUrl: people.photoUrl,
+      occupationSummary: people.occupationSummary,
+      popularityScore: scoreSnapshots.popularityScore,
+      heatScore: scoreSnapshots.heatScore,
+      coverageScore: scoreSnapshots.coverageScore,
+      scoreModelVersion: scoreSnapshots.scoreModelVersion,
+      calculatedAt: scoreSnapshots.calculatedAt,
+    })
     .from(people)
     .innerJoin(latestScores, eq(latestScores.personId, people.id))
-    .limit(50);
+    .innerJoin(
+      scoreSnapshots,
+      and(
+        eq(scoreSnapshots.personId, people.id),
+        eq(scoreSnapshots.calculatedAt, sql`${latestScores.maxCalcAt}`),
+      ),
+    )
+    .orderBy(desc(scoreSnapshots.popularityScore))
+    .limit(100);
 
-  const feedArticles = await fetchGDELTArticles('1440', 50);
+  if (scoredPeople.length === 0) {
+    return NextResponse.json({ ok: true, message: 'No scored people — skipped' });
+  }
+
+  const results: Record<string, number> = {};
+
+  const BATCH = 20;
+  // Build batches of names for OR queries
+  const nameBatches: string[] = [];
+  for (let i = 0; i < scoredPeople.length; i += BATCH) {
+    nameBatches.push(
+      scoredPeople.slice(i, i + BATCH).map(p => `"${p.displayName}"`).join(' OR '),
+    );
+  }
+
+  for (const [timespan, gdeltMinutes] of Object.entries(GDELT_TIMESPANS)) {
+    // Run all batches + discovery concurrently (Vercel IPs are clean)
+    const batchResults = await Promise.all([
+      ...nameBatches.map(q => fetchGDELT(q, gdeltMinutes)),
+      fetchGDELT(DISCOVERY_QUERY, gdeltMinutes),
+    ]);
+
+    const unique = dedupe(batchResults.flat());
+
+    // Count per scored person (title matching in JS)
+    const countMap = new Map<string, GDELTArticle[]>();
+    for (const article of unique) {
+      const titleLower = article.title.toLowerCase();
+      for (const person of scoredPeople) {
+        if (titleLower.includes(person.displayName.toLowerCase())) {
+          const qid = person.wikidataQid;
+          if (!countMap.has(qid)) countMap.set(qid, []);
+          countMap.get(qid)!.push(article);
+        }
+      }
+    }
+
+    const trending = scoredPeople
+      .filter(p => (countMap.get(p.wikidataQid)?.length ?? 0) > 0)
+      .map(p => ({
+        rank:              0,
+        wikidataQid:       p.wikidataQid,
+        displayName:       p.displayName,
+        photoUrl:          p.photoUrl,
+        occupationSummary: p.occupationSummary,
+        popularityScore:   p.popularityScore,
+        heatScore:         p.heatScore,
+        coverageScore:     p.coverageScore,
+        coverageLabel:     'Partial coverage',
+        scoreModelVersion: p.scoreModelVersion,
+        calculatedAt:      p.calculatedAt,
+        articleCount:      countMap.get(p.wikidataQid)!.length,
+        trendingArticles:  countMap.get(p.wikidataQid)!.slice(0, 5),
+      }))
+      .sort((a, b) => b.articleCount - a.articleCount)
+      .slice(0, 50)
+      .map((e, i) => ({ ...e, rank: i + 1 }));
+
+    await conn
+      .insert(cacheEntries)
+      .values({ key: `trending:${timespan}`, data: trending, updatedAt: new Date() })
+      .onConflictDoUpdate({
+        target: cacheEntries.key,
+        set: { data: trending, updatedAt: new Date() },
+      });
+
+    results[timespan] = trending.length;
+  }
+
+  // News feed: concurrent fetch for top 8 people names
+  const top8Query = scoredPeople.slice(0, 8).map(p => `"${p.displayName}"`).join(' OR ');
+  const feedArticles = await fetchGDELT(top8Query, '1440');
   const feed = feedArticles.slice(0, 20).map(a => {
-    const matched = topPeople.find(p =>
-      a.title.toLowerCase().includes(p.displayName.toLowerCase().split(' ')[0] ?? ''),
-    ) ?? topPeople[0];
+    const tl = a.title.toLowerCase();
+    const matched = scoredPeople.find(p => tl.includes(p.displayName.toLowerCase())) ?? scoredPeople[0]!;
     return {
-      title: a.title,
-      url: a.url,
-      domain: a.domain,
-      seendate: a.seendate,
-      personName: matched?.displayName ?? '',
-      personQid: matched?.wikidataQid ?? '',
+      title:      a.title,
+      url:        a.url,
+      domain:     a.domain,
+      seendate:   a.seendate,
+      personName: matched.displayName,
+      personQid:  matched.wikidataQid,
     };
   });
 
