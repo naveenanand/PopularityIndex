@@ -75,6 +75,10 @@ function dedupe(arts: GDELTArticle[]): GDELTArticle[] {
   return [...new Map(arts.map(a => [a.url, a])).values()];
 }
 
+function delay(ms: number) {
+  return new Promise<void>(r => setTimeout(r, ms));
+}
+
 export async function GET(request: Request) {
   const authHeader = request.headers.get('authorization');
   const cronSecret = process.env['CRON_SECRET'];
@@ -139,11 +143,15 @@ export async function GET(request: Request) {
   const personNewsMap = new Map<string, GDELTArticle[]>();
 
   for (const [timespan, gdeltMinutes] of Object.entries(GDELT_TIMESPANS)) {
-    // Run all batches + discovery concurrently (Vercel IPs are clean)
-    const batchResults = await Promise.all([
-      ...nameBatches.map(q => fetchGDELT(q, gdeltMinutes)),
-      fetchGDELT(DISCOVERY_QUERY, gdeltMinutes),
-    ]);
+    // Run batches sequentially with 2s gaps — concurrent calls from the same
+    // Vercel function share one IP and reliably trigger GDELT's rate limit.
+    const batchArticles: GDELTArticle[][] = [];
+    for (const q of nameBatches) {
+      batchArticles.push(await fetchGDELT(q, gdeltMinutes));
+      await delay(2000);
+    }
+    const discoveryArticles = await fetchGDELT(DISCOVERY_QUERY, gdeltMinutes);
+    const batchResults = [...batchArticles, discoveryArticles];
 
     const unique = dedupe(batchResults.flat());
 
