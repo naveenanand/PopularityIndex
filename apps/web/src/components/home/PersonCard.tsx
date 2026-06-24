@@ -1,5 +1,5 @@
 import Link from 'next/link';
-import type { LeaderboardEntry } from '../../lib/api';
+import type { ViewPerson } from '../../lib/api';
 
 const AVATAR_COLORS = [
   'from-indigo-700 to-purple-800',
@@ -23,11 +23,11 @@ function initials(name: string): string {
 }
 
 interface Props {
-  entry: LeaderboardEntry;
+  person: ViewPerson;
   size?: 'sm' | 'md' | 'lg';
 }
 
-export function PersonCard({ entry, size = 'md' }: Props) {
+export function PersonCard({ person, size = 'md' }: Props) {
   const dims = {
     sm: 'w-32 h-44',
     md: 'w-40 h-56',
@@ -36,41 +36,36 @@ export function PersonCard({ entry, size = 'md' }: Props) {
 
   return (
     <Link
-      href={`/people/${entry.wikidataQid}`}
+      href={`/people/${person.wikidataQid}`}
       className={`flex-shrink-0 ${dims} relative group block rounded-xl overflow-hidden card-glow transition-all duration-300 hover:scale-105 hover:z-10`}
     >
-      {/* Photo or gradient placeholder */}
-      {entry.photoUrl ? (
+      {person.photoUrl ? (
         <img
-          src={entry.photoUrl}
-          alt={entry.displayName}
+          src={person.photoUrl}
+          alt={person.displayName}
           className="absolute inset-0 w-full h-full object-cover object-top"
         />
       ) : (
-        <div className={`absolute inset-0 bg-gradient-to-br ${avatarGradient(entry.displayName)} flex items-center justify-center`}>
-          <span className="text-white/50 font-black text-4xl select-none">{initials(entry.displayName)}</span>
+        <div className={`absolute inset-0 bg-gradient-to-br ${avatarGradient(person.displayName)} flex items-center justify-center`}>
+          <span className="text-white/50 font-black text-4xl select-none">{initials(person.displayName)}</span>
         </div>
       )}
 
-      {/* Gradient overlay */}
       <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/20 to-transparent" />
 
-      {/* Rank badge */}
       <div className="absolute top-2 left-2 bg-red-600 text-white text-[10px] font-black px-1.5 py-0.5 rounded leading-tight">
-        #{entry.rank}
+        #{person.rank}
       </div>
 
-      {/* Score badge */}
-      <div className="absolute top-2 right-2 bg-black/60 backdrop-blur-sm text-amber-400 text-[10px] font-bold px-1.5 py-0.5 rounded">
-        {Math.round(entry.popularityScore)}
+      <div className={`absolute top-2 right-2 bg-black/60 backdrop-blur-sm text-[10px] font-bold px-1.5 py-0.5 rounded ${person.primaryColor}`}>
+        {Math.round(person.primaryScore)}
       </div>
 
-      {/* Name + occupation */}
       <div className="absolute bottom-0 left-0 right-0 p-3">
-        <p className="text-white font-bold text-sm leading-tight line-clamp-1">{entry.displayName}</p>
-        {entry.occupationSummary && (
+        <p className="text-white font-bold text-sm leading-tight line-clamp-1">{person.displayName}</p>
+        {person.occupationSummary && (
           <p className="text-zinc-400 text-[10px] mt-0.5 capitalize line-clamp-1">
-            {entry.occupationSummary.replace(/_/g, ' ')}
+            {person.occupationSummary.replace(/_/g, ' ')}
           </p>
         )}
       </div>

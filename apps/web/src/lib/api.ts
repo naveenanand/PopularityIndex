@@ -68,6 +68,21 @@ export interface TrendingEntry extends LeaderboardEntry {
   articleCount: number;
 }
 
+export interface ViewPerson {
+  wikidataQid: string;
+  displayName: string;
+  photoUrl?: string | null;
+  occupationSummary?: string | null;
+  rank: number;
+  primaryScore: number;
+  primaryLabel: string;
+  primaryColor: string;
+  secondaryScore?: number;
+  secondaryLabel?: string;
+  secondaryColor?: string;
+  badge?: string;
+}
+
 const WIKIMEDIA_UA = process.env['WIKIMEDIA_USER_AGENT'] ?? 'PopularityIndex/0.1.0';
 
 // Fetch a Wikipedia thumbnail — cached by Next.js for 24 hours (no repeat API calls)
