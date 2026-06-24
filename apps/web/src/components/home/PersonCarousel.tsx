@@ -1,17 +1,17 @@
 import Link from 'next/link';
-import type { LeaderboardEntry } from '../../lib/api';
+import type { ViewPerson } from '../../lib/api';
 import { PersonCard } from './PersonCard';
 
 interface Props {
   title: string;
   icon?: string;
-  entries: LeaderboardEntry[];
-  seeAllHref?: string;
+  people: ViewPerson[];
+  seeAllHref?: string | undefined;
   size?: 'sm' | 'md' | 'lg';
 }
 
-export function PersonCarousel({ title, icon, entries, seeAllHref, size = 'md' }: Props) {
-  if (entries.length === 0) return null;
+export function PersonCarousel({ title, icon, people, seeAllHref, size = 'md' }: Props) {
+  if (people.length === 0) return null;
 
   return (
     <section className="space-y-3">
@@ -26,11 +26,9 @@ export function PersonCarousel({ title, icon, entries, seeAllHref, size = 'md' }
           </Link>
         )}
       </div>
-
-      {/* Horizontal scroll container */}
       <div className="flex gap-3 overflow-x-auto scrollbar-hide px-6 sm:px-8 pb-2">
-        {entries.map(entry => (
-          <PersonCard key={entry.wikidataQid} entry={entry} size={size} />
+        {people.map(person => (
+          <PersonCard key={person.wikidataQid} person={person} size={size} />
         ))}
       </div>
     </section>

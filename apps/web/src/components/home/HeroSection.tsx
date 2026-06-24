@@ -1,16 +1,16 @@
 import Link from 'next/link';
-import type { LeaderboardEntry } from '../../lib/api';
+import type { ViewPerson } from '../../lib/api';
 
 interface Props {
-  person: LeaderboardEntry;
+  person: ViewPerson;
+  rankLabel: string; // e.g. "Most Popular" | "Hottest Right Now" | "Trending Today"
 }
 
-export function HeroSection({ person }: Props) {
+export function HeroSection({ person, rankLabel }: Props) {
   const occupation = person.occupationSummary?.replace(/_/g, ' ') ?? '';
 
   return (
     <div className="relative w-full h-[60vh] min-h-[400px] max-h-[700px] overflow-hidden">
-      {/* Background photo */}
       {person.photoUrl ? (
         <img
           src={person.photoUrl}
@@ -21,16 +21,13 @@ export function HeroSection({ person }: Props) {
         <div className="absolute inset-0 bg-gradient-to-br from-zinc-800 to-zinc-950" />
       )}
 
-      {/* Gradient overlays — left-to-right fade + top-bottom dark */}
       <div className="absolute inset-0 bg-gradient-to-r from-[#0a0a0a] via-[#0a0a0a]/60 to-transparent" />
       <div className="absolute inset-0 bg-gradient-to-t from-[#0a0a0a] via-transparent to-[#0a0a0a]/30" />
 
-      {/* Content */}
       <div className="absolute inset-0 flex flex-col justify-end pb-12 px-6 sm:px-10 max-w-2xl">
-        {/* Category */}
         <div className="flex items-center gap-2 mb-3">
           <span className="text-red-500 text-xs font-bold uppercase tracking-widest">
-            #{person.rank} Most Popular
+            #{person.rank} {rankLabel}
           </span>
           {occupation && (
             <>
@@ -40,31 +37,32 @@ export function HeroSection({ person }: Props) {
           )}
         </div>
 
-        {/* Name */}
         <h1 className="text-4xl sm:text-6xl font-black text-white leading-none tracking-tight mb-3">
           {person.displayName}
         </h1>
 
-        {/* Score pills */}
-        <div className="flex items-center gap-3 mb-6">
+        <div className="flex items-center gap-3 mb-6 flex-wrap">
           <div className="flex items-center gap-1.5 bg-white/10 backdrop-blur-sm rounded-full px-3 py-1.5">
-            <span className="text-amber-400 text-sm font-bold">{Math.round(person.popularityScore)}</span>
-            <span className="text-zinc-400 text-xs">Popularity</span>
+            <span className={`text-sm font-bold ${person.primaryColor}`}>{Math.round(person.primaryScore)}</span>
+            <span className="text-zinc-400 text-xs">{person.primaryLabel}</span>
           </div>
-          <div className="flex items-center gap-1.5 bg-white/10 backdrop-blur-sm rounded-full px-3 py-1.5">
-            <span className="text-orange-400 text-sm font-bold">{Math.round(person.heatScore)}</span>
-            <span className="text-zinc-400 text-xs">Heat</span>
-          </div>
-          <div className={`px-3 py-1.5 rounded-full text-xs font-semibold ${
-            person.coverageLabel === 'High coverage'
-              ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
-              : 'bg-zinc-700/50 text-zinc-400'
-          }`}>
-            {person.coverageLabel}
-          </div>
+          {person.secondaryScore !== undefined && (
+            <div className="flex items-center gap-1.5 bg-white/10 backdrop-blur-sm rounded-full px-3 py-1.5">
+              <span className={`text-sm font-bold ${person.secondaryColor ?? 'text-zinc-300'}`}>{Math.round(person.secondaryScore)}</span>
+              <span className="text-zinc-400 text-xs">{person.secondaryLabel}</span>
+            </div>
+          )}
+          {person.badge && (
+            <div className={`px-3 py-1.5 rounded-full text-xs font-semibold ${
+              person.badge === 'High coverage'
+                ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
+                : 'bg-zinc-700/50 text-zinc-400'
+            }`}>
+              {person.badge}
+            </div>
+          )}
         </div>
 
-        {/* CTA */}
         <div className="flex items-center gap-3">
           <Link
             href={`/people/${person.wikidataQid}`}
