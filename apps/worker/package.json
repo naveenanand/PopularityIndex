@@ -11,7 +11,8 @@
     "score:calculate": "tsx src/commands/score-calculate.ts",
     "expand:people": "tsx src/commands/expand-people.ts",
     "update:photos": "tsx src/commands/update-photos.ts",
-    "bulk:import": "tsx src/commands/bulk-import.ts"
+    "bulk:import": "tsx src/commands/bulk-import.ts",
+    "bulk:import:1m": "tsx src/commands/bulk-import-1m.ts"
   },
   "dependencies": {
     "@pai/db": "workspace:*",
