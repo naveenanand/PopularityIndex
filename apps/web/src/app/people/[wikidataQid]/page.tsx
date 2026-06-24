@@ -15,12 +15,8 @@ interface PageProps {
 export default async function PersonPage({ params }: PageProps) {
   const { wikidataQid } = await params;
 
-  // Fetch person (DB only, no GDELT) + trending reason concurrently
-  const [data, trendingReason] = await Promise.all([
-    getPersonWithScores(wikidataQid),
-    getPersonTrendingReason('', wikidataQid).catch(() => null),
-  ]);
-
+  // Fetch person from DB first (lightweight — just id + displayName needed for trending call)
+  const data = await getPersonWithScores(wikidataQid);
   if (!data) return notFound();
 
   const { person, latestScore, scoreHistory } = data;
@@ -28,10 +24,9 @@ export default async function PersonPage({ params }: PageProps) {
   const occupation = person.occupationSummary?.replace(/_/g, ' ') ?? '';
   const explanation = latestScore?.explanationJson as ScoreExplanation | undefined;
 
-  // If trending cache didn't have articles, try live GDELT fallback using person's name
-  const trendingReasonFinal =
-    trendingReason ??
-    (await getPersonTrendingReason(person.displayName, wikidataQid).catch(() => null));
+  // Fetch trending reason with displayName so the GDELT fallback can run if needed.
+  // Single DB query for all cache keys; GDELT capped at 3s if caches are empty.
+  const trendingReasonFinal = await getPersonTrendingReason(person.displayName, wikidataQid).catch(() => null);
 
   return (
     <div className="min-h-screen">
