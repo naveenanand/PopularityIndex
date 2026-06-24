@@ -17,33 +17,25 @@ if (envPath) config({ path: envPath });
 
 const SPARQL_BASE = process.env['WIKIDATA_SPARQL_BASE'] ?? 'https://query.wikidata.org';
 const USER_AGENT = process.env['WIKIMEDIA_USER_AGENT'] ?? 'PopularityIndex/0.1.0 bulk-import';
-const PAGE_SIZE = 10_000;
+const PAGE_SIZE = 500;
 const targetArg = parseInt(process.argv[2] ?? '10000', 10);
 const TARGET = isNaN(targetArg) ? 10_000 : targetArg;
 
 interface SparqlBinding {
   wikidataQid: { value: string };
-  personLabel: { value: string };
-  occupation?: { value: string };
+  name: { value: string };
 }
 
 function buildQuery(offset: number, limit: number): string {
   return `
-SELECT DISTINCT ?wikidataQid ?personLabel (SAMPLE(?occLabel) AS ?occupation) WHERE {
+SELECT ?wikidataQid ?name WHERE {
   ?person wdt:P31 wd:Q5 .
   ?enwiki schema:about ?person ;
           schema:isPartOf <https://en.wikipedia.org/> .
-  OPTIONAL {
-    ?person wdt:P106 ?occ .
-    ?occ rdfs:label ?occLabel .
-    FILTER(LANG(?occLabel) = "en")
-  }
+  ?person rdfs:label ?name .
+  FILTER(LANG(?name) = "en")
   BIND(REPLACE(STR(?person), "http://www.wikidata.org/entity/", "") AS ?wikidataQid)
-  SERVICE wikibase:label { bd:serviceParam wikibase:language "en" }
-  FILTER(LANG(?personLabel) = "en")
 }
-GROUP BY ?wikidataQid ?personLabel
-ORDER BY ?wikidataQid
 LIMIT ${limit}
 OFFSET ${offset}
 `.trim();
@@ -54,16 +46,15 @@ async function fetchPage(offset: number): Promise<Array<{ wikidataQid: string; d
   const url = `${SPARQL_BASE}/sparql?query=${encodeURIComponent(query)}&format=json`;
   const res = await fetch(url, {
     headers: { 'User-Agent': USER_AGENT, Accept: 'application/sparql-results+json' },
-    signal: AbortSignal.timeout(90_000), // 90s for large pages
+    signal: AbortSignal.timeout(120_000),
   });
   if (!res.ok) throw new Error(`SPARQL ${res.status} at offset ${offset}: ${res.statusText}`);
   const data = (await res.json()) as { results: { bindings: SparqlBinding[] } };
   return data.results.bindings
-    .filter(b => b.wikidataQid?.value?.startsWith('Q') && b.personLabel?.value)
+    .filter(b => b.wikidataQid?.value?.startsWith('Q') && b.name?.value)
     .map(b => ({
       wikidataQid: b.wikidataQid.value,
-      displayName: b.personLabel.value,
-      ...(b.occupation?.value ? { occupation: b.occupation.value } : {}),
+      displayName: b.name.value,
     }));
 }
 
@@ -83,11 +74,23 @@ try {
     console.log(`[job:${job.id}] Fetching SPARQL page: offset=${offset} limit=${toFetch}...`);
 
     let candidates: Awaited<ReturnType<typeof fetchPage>>;
-    try {
-      candidates = await fetchPage(offset);
-    } catch (err) {
-      console.warn(`[job:${job.id}] SPARQL failed at offset=${offset}:`, err);
-      break;
+    let retries = 0;
+    while (true) {
+      try {
+        candidates = await fetchPage(offset);
+        break;
+      } catch (err) {
+        retries++;
+        if (retries >= 3) {
+          console.warn(`[job:${job.id}] SPARQL failed 3 times at offset=${offset}, stopping.`);
+          await jobsRepo.completeJobRun(job.id, added);
+          console.log(`[job:${job.id}] Partial complete: added=${added} at offset=${offset}`);
+          process.exit(0);
+        }
+        const wait = retries * 10_000;
+        console.warn(`[job:${job.id}] SPARQL error (attempt ${retries}/3), retrying in ${wait / 1000}s...`, String(err).split('\n')[0]);
+        await new Promise(r => setTimeout(r, wait));
+      }
     }
 
     if (candidates.length === 0) {
