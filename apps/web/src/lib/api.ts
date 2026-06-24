@@ -356,7 +356,7 @@ export async function getPersonTopArticles(displayName: string, maxRecords = 5):
     mode: 'artlist',
     maxrecords: String(maxRecords),
     format: 'json',
-    timespan: '7d',
+    timespan: '10080', // 7 days in minutes
     sort: 'DateDesc',
   });
   const WIKIMEDIA_UA = process.env['WIKIMEDIA_USER_AGENT'] ?? 'PopularityIndex/0.1.0';
