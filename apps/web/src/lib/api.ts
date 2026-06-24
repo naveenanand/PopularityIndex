@@ -356,7 +356,7 @@ export async function getPersonTopArticles(displayName: string, maxRecords = 5):
     mode: 'artlist',
     maxrecords: String(maxRecords),
     format: 'json',
-    timespan: '10080', // 7d in minutes
+    timespan: '7d',
     sort: 'DateDesc',
   });
   const WIKIMEDIA_UA = process.env['WIKIMEDIA_USER_AGENT'] ?? 'PopularityIndex/0.1.0';
@@ -366,7 +366,9 @@ export async function getPersonTopArticles(displayName: string, maxRecords = 5):
       next: { revalidate: 3600 },
     });
     if (!res.ok) return [];
-    const data = (await res.json()) as { articles?: NewsArticle[] };
+    const text = await res.text();
+    if (!text.startsWith('{') && !text.startsWith('[')) return [];
+    const data = JSON.parse(text) as { articles?: NewsArticle[] };
     return data.articles?.slice(0, maxRecords) ?? [];
   } catch {
     return [];
@@ -380,43 +382,63 @@ export interface TrendingReason {
   articles: NewsArticle[];
 }
 
-// Fetch GDELT articles for a person and build a "why trending" summary.
-// Uses cached trending article data when available, falls back to live GDELT.
+// Fetch a "why trending / in the news" summary for a person.
+// Priority: trending cache (1h/24h/30d) → news_by_person cache → live GDELT fallback.
+// The first two are populated by the cron so there's no per-page GDELT call for most people.
 export async function getPersonTrendingReason(
   displayName: string,
   wikidataQid: string,
 ): Promise<TrendingReason | null> {
   const conn = await db();
+  if (!conn) return null;
 
-  // Check all trending caches for pre-fetched articles stored during update:trending
-  if (conn) {
-    for (const timespan of ['1h', '24h', '30d'] as const) {
-      const rows = await conn
-        .select({ data: cacheEntries.data })
-        .from(cacheEntries)
-        .where(eq(cacheEntries.key, `trending:${timespan}`))
-        .limit(1);
-      if (!rows[0]) continue;
+  // 1. Check trending caches — person is in top-50 trending
+  for (const timespan of ['1h', '24h', '30d'] as const) {
+    const rows = await conn
+      .select({ data: cacheEntries.data })
+      .from(cacheEntries)
+      .where(eq(cacheEntries.key, `trending:${timespan}`))
+      .limit(1);
+    if (!rows[0]) continue;
 
-      const cached = rows[0].data as Array<{
-        wikidataQid: string;
-        articleCount: number;
-        trendingArticles?: NewsArticle[];
-      }>;
-      const entry = cached.find(e => e.wikidataQid === wikidataQid);
-      if (entry && entry.trendingArticles && entry.trendingArticles.length > 0) {
-        const timespanLabel = timespan === '1h' ? 'last hour' : timespan === '24h' ? 'last 24 hours' : 'last 30 days';
-        return {
-          articleCount: entry.articleCount,
-          timespan: timespanLabel,
-          bullets: buildBullets(entry.articleCount, timespanLabel, entry.trendingArticles),
-          articles: entry.trendingArticles,
-        };
-      }
+    const cached = rows[0].data as Array<{
+      wikidataQid: string;
+      articleCount: number;
+      trendingArticles?: NewsArticle[];
+    }>;
+    const entry = cached.find(e => e.wikidataQid === wikidataQid);
+    if (entry && entry.trendingArticles && entry.trendingArticles.length > 0) {
+      const timespanLabel = timespan === '1h' ? 'last hour' : timespan === '24h' ? 'last 24 hours' : 'last 30 days';
+      return {
+        articleCount: entry.articleCount,
+        timespan: timespanLabel,
+        bullets: buildBullets(entry.articleCount, timespanLabel, entry.trendingArticles),
+        articles: entry.trendingArticles,
+      };
     }
   }
 
-  // Fall back to a live GDELT query (skip if no name to query)
+  // 2. Check news_by_person cache — populated by cron for all scored people with news
+  const nbpRows = await conn
+    .select({ data: cacheEntries.data })
+    .from(cacheEntries)
+    .where(eq(cacheEntries.key, 'news_by_person'))
+    .limit(1);
+
+  if (nbpRows[0]) {
+    const newsByPerson = nbpRows[0].data as Record<string, NewsArticle[]>;
+    const personArticles = newsByPerson[wikidataQid];
+    if (personArticles && personArticles.length > 0) {
+      return {
+        articleCount: personArticles.length,
+        timespan: 'last 30 days',
+        bullets: buildBullets(personArticles.length, 'last 30 days', personArticles),
+        articles: personArticles,
+      };
+    }
+  }
+
+  // 3. Live GDELT fallback — only for people not in any cache (newly added, unscored)
   if (!displayName) return null;
   const articles = await getPersonTopArticles(displayName, 5);
   if (articles.length === 0) return null;

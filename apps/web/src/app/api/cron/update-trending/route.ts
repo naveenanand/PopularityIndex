@@ -135,6 +135,10 @@ export async function GET(request: Request) {
     );
   }
 
+  // Per-person news map: accumulated across all timespans, used to populate person pages
+  // Key: wikidataQid, Value: deduped articles (most recent timespan wins)
+  const personNewsMap = new Map<string, GDELTArticle[]>();
+
   for (const [timespan, gdeltMinutes] of Object.entries(GDELT_TIMESPANS)) {
     // Run all batches + discovery concurrently (Vercel IPs are clean)
     const batchResults = await Promise.all([
@@ -155,6 +159,19 @@ export async function GET(request: Request) {
           countMap.get(qid)!.push(article);
         }
       }
+    }
+
+    // Accumulate into per-person news map (dedup by URL)
+    for (const [qid, articles] of countMap) {
+      const existing = personNewsMap.get(qid) ?? [];
+      const existingUrls = new Set(existing.map(a => a.url));
+      for (const article of articles) {
+        if (!existingUrls.has(article.url)) {
+          existing.push(article);
+          existingUrls.add(article.url);
+        }
+      }
+      personNewsMap.set(qid, existing);
     }
 
     const trending = scoredPeople
@@ -200,9 +217,26 @@ export async function GET(request: Request) {
     results[timespan] = trending.length;
   }
 
+  // Store per-person news cache — used by person detail pages to show
+  // "Why They're Trending / In the News" without calling GDELT live on every visit.
+  // Covers ALL scored people who have any article mentions, not just trending top-50.
+  const newsByPerson: Record<string, GDELTArticle[]> = {};
+  for (const [qid, articles] of personNewsMap) {
+    newsByPerson[qid] = articles
+      .sort((a, b) => b.seendate.localeCompare(a.seendate))
+      .slice(0, 5);
+  }
+  await conn
+    .insert(cacheEntries)
+    .values({ key: 'news_by_person', data: newsByPerson, updatedAt: new Date() })
+    .onConflictDoUpdate({
+      target: cacheEntries.key,
+      set: { data: newsByPerson, updatedAt: new Date() },
+    });
+
   // News feed: concurrent fetch for top 8 people names
   const top8Query = scoredPeople.slice(0, 8).map(p => `"${p.displayName}"`).join(' OR ');
-  const feedArticles = await fetchGDELT(top8Query, '1440');
+  const feedArticles = await fetchGDELT(top8Query, '24h');
   const feed = feedArticles.slice(0, 20).map(a => {
     const tl = a.title.toLowerCase();
     const matched = scoredPeople.find(p => tl.includes(p.displayName.toLowerCase())) ?? scoredPeople[0]!;
@@ -228,6 +262,7 @@ export async function GET(request: Request) {
     ok: true,
     trending: results,
     newsFeed: feed.length,
+    newsByPerson: Object.keys(newsByPerson).length,
     updatedAt: new Date().toISOString(),
   });
 }
