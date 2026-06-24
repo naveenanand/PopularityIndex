@@ -15,6 +15,13 @@
       "when": 1782248024759,
       "tag": "0001_add_photo_url",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1750680000000,
+      "tag": "0002_add_cache_entries",
+      "breakpoints": true
     }
   ]
 }
