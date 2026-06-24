@@ -121,7 +121,7 @@ export async function GET(request: Request) {
       ),
     )
     .orderBy(desc(scoreSnapshots.popularityScore))
-    .limit(500);
+    .limit(200);
 
   if (scoredPeople.length === 0) {
     return NextResponse.json({ ok: true, message: 'No scored people — skipped' });
@@ -129,8 +129,10 @@ export async function GET(request: Request) {
 
   const results: Record<string, number> = {};
 
-  const BATCH = 20;
-  // Build batches of names for OR queries
+  // 50 names per OR query keeps URLs short enough for GDELT while minimising call count.
+  // With limit(200) scored people → 4 batches × 3 timespans = 12 calls + 3 discovery + 1 feed
+  // = 16 total × ~4s each ≈ 65s, well within maxDuration=300.
+  const BATCH = 50;
   const nameBatches: string[] = [];
   for (let i = 0; i < scoredPeople.length; i += BATCH) {
     nameBatches.push(
