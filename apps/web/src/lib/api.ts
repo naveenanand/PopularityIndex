@@ -416,7 +416,8 @@ export async function getPersonTrendingReason(
     }
   }
 
-  // Fall back to a live GDELT query
+  // Fall back to a live GDELT query (skip if no name to query)
+  if (!displayName) return null;
   const articles = await getPersonTopArticles(displayName, 5);
   if (articles.length === 0) return null;
 

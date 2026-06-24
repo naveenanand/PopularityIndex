@@ -1,13 +1,12 @@
-import { Suspense } from 'react';
 import { notFound } from 'next/navigation';
 import Link from 'next/link';
 import { getPersonWithScores, getPersonTrendingReason } from '../../../lib/api';
 import { ScoreHistoryChart } from '../../../components/person/ScoreHistoryChart';
 import { DataSourceBadge } from '../../../components/shared/DataSourceBadge';
-import { LiveScoreSection, LiveScoreSkeleton } from '../../../components/person/LiveScoreSection';
-import { formatDate } from '../../../lib/formatters';
+import { formatDate, formatScore, coverageBadgeColor } from '../../../lib/formatters';
+import type { ScoreExplanation } from '@pai/shared';
 
-export const revalidate = 60;
+export const revalidate = 300; // 5 min cache — trending data changes with cron
 
 interface PageProps {
   params: Promise<{ wikidataQid: string }>;
@@ -15,16 +14,24 @@ interface PageProps {
 
 export default async function PersonPage({ params }: PageProps) {
   const { wikidataQid } = await params;
-  const data = await getPersonWithScores(wikidataQid);
+
+  // Fetch person (DB only, no GDELT) + trending reason concurrently
+  const [data, trendingReason] = await Promise.all([
+    getPersonWithScores(wikidataQid),
+    getPersonTrendingReason('', wikidataQid).catch(() => null),
+  ]);
 
   if (!data) return notFound();
 
-  const { person, scoreHistory } = data;
-
-  // Fetch trending reason in parallel after we have the person's display name
-  const trendingReasonFinal = await getPersonTrendingReason(person.displayName, wikidataQid).catch(() => null);
+  const { person, latestScore, scoreHistory } = data;
   const photoUrl = person.photoUrl;
   const occupation = person.occupationSummary?.replace(/_/g, ' ') ?? '';
+  const explanation = latestScore?.explanationJson as ScoreExplanation | undefined;
+
+  // If trending cache didn't have articles, try live GDELT fallback using person's name
+  const trendingReasonFinal =
+    trendingReason ??
+    (await getPersonTrendingReason(person.displayName, wikidataQid).catch(() => null));
 
   return (
     <div className="min-h-screen">
@@ -42,9 +49,8 @@ export default async function PersonPage({ params }: PageProps) {
       {/* Content — overlaps the hero */}
       <div className="max-w-3xl mx-auto px-4 sm:px-6 -mt-24 relative z-10 space-y-6 pb-16">
 
-        {/* Person header card */}
+        {/* Person header */}
         <div className="flex items-end gap-5">
-          {/* Avatar */}
           {photoUrl ? (
             <img
               src={photoUrl}
@@ -84,12 +90,37 @@ export default async function PersonPage({ params }: PageProps) {
           </div>
         </div>
 
-        {/* Live scores — streams in while page is visible */}
-        <Suspense fallback={<LiveScoreSkeleton />}>
-          <LiveScoreSection personId={person.id} displayName={person.displayName} />
-        </Suspense>
+        {/* Score cards — from DB, no live GDELT call */}
+        {latestScore ? (
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            <div className="bg-zinc-900 rounded-2xl border border-zinc-800 p-4 text-center">
+              <div className="text-3xl font-black text-amber-400">{formatScore(latestScore.popularityScore)}</div>
+              <div className="text-xs text-zinc-500 mt-1">Popularity</div>
+            </div>
+            <div className="bg-zinc-900 rounded-2xl border border-zinc-800 p-4 text-center">
+              <div className="text-3xl font-black text-orange-400">{formatScore(latestScore.heatScore)}</div>
+              <div className="text-xs text-zinc-500 mt-1">Heat</div>
+            </div>
+            <div className="bg-zinc-900 rounded-2xl border border-zinc-800 p-4 text-center">
+              <div className="text-3xl font-black text-zinc-200">{Math.round(latestScore.coverageScore)}</div>
+              <div className="mt-1.5">
+                <span className={`inline-block px-2 py-0.5 rounded-full text-xs border ${coverageBadgeColor(explanation?.coverage_label ?? 'Partial coverage')}`}>
+                  {explanation?.coverage_label ?? 'Partial coverage'}
+                </span>
+              </div>
+            </div>
+            <div className="bg-zinc-900 rounded-2xl border border-zinc-800 p-4 text-center">
+              <div className="text-3xl font-black text-zinc-200">{Math.round(latestScore.confidenceScore)}</div>
+              <div className="text-xs text-zinc-500 mt-1">Confidence</div>
+            </div>
+          </div>
+        ) : (
+          <div className="bg-zinc-900 rounded-2xl border border-zinc-800 p-6 text-center text-zinc-500 text-sm">
+            No score computed yet. Run <code className="text-xs bg-zinc-800 px-1 rounded">pnpm score:calculate</code> to generate scores.
+          </div>
+        )}
 
-        {/* Why Trending */}
+        {/* Why Trending + Source Articles — from cache, falls back to live GDELT */}
         {trendingReasonFinal && (
           <div className="bg-zinc-900 rounded-2xl border border-zinc-800 p-6 space-y-4">
             <div className="flex items-center gap-2">
@@ -100,7 +131,6 @@ export default async function PersonPage({ params }: PageProps) {
               </span>
             </div>
 
-            {/* Summary bullets */}
             <ul className="space-y-2">
               {trendingReasonFinal.bullets.map((bullet, i) => (
                 <li key={i} className="flex items-start gap-2 text-sm text-zinc-300">
@@ -110,11 +140,10 @@ export default async function PersonPage({ params }: PageProps) {
               ))}
             </ul>
 
-            {/* Source articles */}
             {trendingReasonFinal.articles.length > 0 && (
               <div className="border-t border-zinc-800 pt-4 space-y-2">
                 <p className="text-xs font-semibold text-zinc-500 uppercase tracking-wide">Source Articles</p>
-                <ul className="space-y-2">
+                <ul className="space-y-3">
                   {trendingReasonFinal.articles.map((article, i) => (
                     <li key={i}>
                       <a
@@ -132,6 +161,7 @@ export default async function PersonPage({ params }: PageProps) {
                     </li>
                   ))}
                 </ul>
+                <p className="text-[10px] text-zinc-700 pt-1">Source: GDELT Project</p>
               </div>
             )}
           </div>
@@ -147,6 +177,30 @@ export default async function PersonPage({ params }: PageProps) {
           </div>
           <ScoreHistoryChart history={scoreHistory} />
         </div>
+
+        {/* Signal breakdown — from explanation JSON in DB */}
+        {explanation && (
+          <div className="bg-zinc-900 rounded-2xl border border-zinc-800 p-6 space-y-3">
+            <h2 className="font-bold text-white text-sm">Score Breakdown</h2>
+            {explanation.top_contributors && explanation.top_contributors.length > 0 && (
+              <div className="space-y-2">
+                {explanation.top_contributors.slice(0, 5).map((c, i) => (
+                  <div key={i} className="flex items-center justify-between text-sm border-b border-zinc-800/60 pb-1.5">
+                    <span className="text-zinc-400 capitalize">{c.signal.replace(/_/g, ' ')}</span>
+                    <span className={`font-mono text-xs ${parseFloat(c.impact) >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                      {c.impact}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
+            {explanation.signals_missing && explanation.signals_missing.length > 0 && (
+              <p className="text-xs text-zinc-600">
+                Missing signals: {explanation.signals_missing.slice(0, 4).join(', ')}
+              </p>
+            )}
+          </div>
+        )}
 
         {/* Data sources */}
         <div className="bg-zinc-900 rounded-2xl border border-zinc-800 p-6 space-y-3">
@@ -169,7 +223,7 @@ export default async function PersonPage({ params }: PageProps) {
             ))}
           </div>
           <p className="text-xs text-zinc-600 mt-2">
-            Scores computed live on each visit. Reddit requires API credentials.
+            Scores computed by daily job. News data cached via GDELT trending cron.
           </p>
         </div>
       </div>

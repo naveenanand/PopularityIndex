@@ -40,10 +40,11 @@ interface ScoredPerson {
   calculatedAt: Date;
 }
 
+// Use named units — numeric minutes are unreliable beyond ~7 days in GDELT artlist
 const GDELT_TIMESPANS: Record<string, string> = {
-  '1h':  '60',
-  '24h': '1440',
-  '30d': '43200',
+  '1h':  '1h',
+  '24h': '24h',
+  '30d': '30d',
 };
 
 const BATCH_SIZE = 25;
@@ -219,23 +220,30 @@ for (const [timespan, gdeltMinutes] of Object.entries(GDELT_TIMESPANS)) {
   }
 
   const trending = scoredPeople
-    .filter(p => (countMap.get(p.wikidataQid)?.length ?? 0) > 0)
-    .map(p => ({
-      rank:              0,
-      wikidataQid:       p.wikidataQid,
-      displayName:       p.displayName,
-      photoUrl:          p.photoUrl,
-      occupationSummary: p.occupationSummary,
-      popularityScore:   p.popularityScore,
-      heatScore:         p.heatScore,
-      coverageScore:     p.coverageScore,
-      coverageLabel:     'Partial coverage',
-      scoreModelVersion: p.scoreModelVersion,
-      calculatedAt:      p.calculatedAt,
-      articleCount:      countMap.get(p.wikidataQid)!.length,
-      trendingArticles:  countMap.get(p.wikidataQid)!.slice(0, 5),
-    }))
-    .sort((a, b) => b.articleCount - a.articleCount)
+    .filter(p => (countMap.get(p.wikidataQid)?.length ?? 0) >= 2)
+    .map(p => {
+      const articles = countMap.get(p.wikidataQid)!;
+      // Hybrid rank: article count × (1 + log of popularity) keeps high-profile
+      // people ranked above newly-newsworthy zero-scored people with equal articles
+      const scoreBoost = 1 + Math.log1p(p.popularityScore) / 10;
+      return {
+        rank:              0,
+        wikidataQid:       p.wikidataQid,
+        displayName:       p.displayName,
+        photoUrl:          p.photoUrl,
+        occupationSummary: p.occupationSummary,
+        popularityScore:   p.popularityScore,
+        heatScore:         p.heatScore,
+        coverageScore:     p.coverageScore,
+        coverageLabel:     'Partial coverage',
+        scoreModelVersion: p.scoreModelVersion,
+        calculatedAt:      p.calculatedAt,
+        articleCount:      articles.length,
+        trendingScore:     articles.length * scoreBoost,
+        trendingArticles:  articles.slice(0, 5),
+      };
+    })
+    .sort((a, b) => b.trendingScore - a.trendingScore)
     .slice(0, 50)
     .map((e, i) => ({ ...e, rank: i + 1 }));
 
