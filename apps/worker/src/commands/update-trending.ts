@@ -133,6 +133,9 @@ if (scoredPeople.length === 0) {
 
 console.log(`Found ${scoredPeople.length} scored people to check.`);
 
+// Per-person news map: accumulated across all timespans for person detail page display
+const personNewsMap = new Map<string, GDELTArticle[]>();
+
 // Broad-discovery keywords — returns general news articles that might mention
 // newsworthy people who aren't yet scored in our DB.
 const DISCOVERY_QUERY =
@@ -179,6 +182,19 @@ for (const [timespan, gdeltMinutes] of Object.entries(GDELT_TIMESPANS)) {
         countMap.get(qid)!.push(article);
       }
     }
+  }
+
+  // Accumulate into global per-person news map (dedup by URL)
+  for (const [qid, articles] of countMap) {
+    const existing = personNewsMap.get(qid) ?? [];
+    const existingUrls = new Set(existing.map(a => a.url));
+    for (const article of articles) {
+      if (!existingUrls.has(article.url)) {
+        existing.push(article);
+        existingUrls.add(article.url);
+      }
+    }
+    personNewsMap.set(qid, existing);
   }
 
   // Phase 2 discovery: match discovery articles against ALL 100k people in DB
@@ -258,11 +274,28 @@ for (const [timespan, gdeltMinutes] of Object.entries(GDELT_TIMESPANS)) {
   console.log(`[${timespan}] Stored ${trending.length} trending entries`);
 }
 
+// Store per-person news cache — used by person detail pages to show news without
+// calling GDELT live on every visit. Covers all scored people with article matches.
+const newsByPerson: Record<string, GDELTArticle[]> = {};
+for (const [qid, articles] of personNewsMap) {
+  newsByPerson[qid] = articles
+    .sort((a, b) => b.seendate.localeCompare(a.seendate))
+    .slice(0, 5);
+}
+await db
+  .insert(cacheEntries)
+  .values({ key: 'news_by_person', data: newsByPerson, updatedAt: new Date() })
+  .onConflictDoUpdate({
+    target: cacheEntries.key,
+    set: { data: newsByPerson, updatedAt: new Date() },
+  });
+console.log(`[news_by_person] Stored news for ${Object.keys(newsByPerson).length} people`);
+
 // News feed: latest articles that mention any of our top scored people
 console.log('\n[news_feed] Fetching...');
 await delay(RATE_LIMIT_MS);
 const top8Names = scoredPeople.slice(0, 8).map(p => `"${p.displayName}"`).join(' OR ');
-const feedArticles = await fetchGDELTArticles(top8Names, '1440');
+const feedArticles = await fetchGDELTArticles(top8Names, '24h');
 
 const feed = feedArticles.slice(0, 20).map(a => {
   const titleLower = a.title.toLowerCase();
