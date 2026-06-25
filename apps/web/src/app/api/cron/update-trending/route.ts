@@ -25,7 +25,7 @@ const GDELT_TIMESPANS: Record<string, string> = {
 };
 
 const DISCOVERY_QUERY =
-  'president OR minister OR senator OR CEO OR actor OR singer OR athlete OR champion OR arrested OR elected OR appointed';
+  '(president OR minister OR senator OR CEO OR actor OR singer OR athlete OR champion OR arrested OR elected OR appointed)';
 
 interface GDELTArticle {
   title: string;
@@ -129,14 +129,15 @@ export async function GET(request: Request) {
 
   const results: Record<string, number> = {};
 
-  // 50 names per OR query keeps URLs short enough for GDELT while minimising call count.
-  // With limit(200) scored people → 4 batches × 3 timespans = 12 calls + 3 discovery + 1 feed
-  // = 16 total × ~4s each ≈ 65s, well within maxDuration=300.
-  const BATCH = 50;
+  // 10 names per batch: GDELT rejects OR queries over ~300 chars and requires
+  // parentheses around OR chains. 10 × ~20 chars/name ≈ 270 chars — safely under limit.
+  // 200 people / 10 per batch = 20 batches × 3 timespans + discovery + feed = ~65 calls.
+  // At 2s delay each: ~130s sequential — within maxDuration=300.
+  const BATCH = 10;
   const nameBatches: string[] = [];
   for (let i = 0; i < scoredPeople.length; i += BATCH) {
     nameBatches.push(
-      scoredPeople.slice(i, i + BATCH).map(p => `"${p.displayName}"`).join(' OR '),
+      `(${scoredPeople.slice(i, i + BATCH).map(p => `"${p.displayName}"`).join(' OR ')})`,
     );
   }
 
