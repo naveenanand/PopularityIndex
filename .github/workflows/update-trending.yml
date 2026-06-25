@@ -1,0 +1,39 @@
+name: Update Trending Cache
+
+on:
+  schedule:
+    # Every 4 hours — keeps trending tabs and person page news fresh
+    - cron: '0 */4 * * *'
+  workflow_dispatch: {}
+
+jobs:
+  update-trending:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.x'
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build packages
+        run: |
+          pnpm --filter @pai/shared build
+          pnpm --filter @pai/db build
+
+      - name: Update trending cache
+        run: pnpm update:trending
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          WIKIMEDIA_USER_AGENT: PopularityIndex/0.1.0 (naveenanand.87@gmail.com)
+          NODE_ENV: production
