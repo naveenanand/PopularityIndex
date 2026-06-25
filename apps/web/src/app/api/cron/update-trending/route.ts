@@ -58,7 +58,7 @@ async function fetchGDELT(query: string, gdeltMinutes: string): Promise<GDELTArt
   try {
     const res = await fetch(`https://api.gdeltproject.org/api/v2/doc/doc?${params}`, {
       headers: { 'User-Agent': UA },
-      signal: AbortSignal.timeout(20_000),
+      signal: AbortSignal.timeout(8_000),
       cache: 'no-store',
     });
     if (!res.ok) return [];
