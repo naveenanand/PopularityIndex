@@ -47,7 +47,7 @@ const GDELT_TIMESPANS: Record<string, string> = {
   '30d': '20160', // 14 days — 30d (43200) hits complexity limits with long OR chains
 };
 
-const BATCH_SIZE = 25;
+const BATCH_SIZE = 10;
 const RATE_LIMIT_MS = 6_000;
 
 async function fetchGDELTArticles(query: string, gdeltMinutes: string): Promise<GDELTArticle[]> {
@@ -139,7 +139,7 @@ const personNewsMap = new Map<string, GDELTArticle[]>();
 // Broad-discovery keywords — returns general news articles that might mention
 // newsworthy people who aren't yet scored in our DB.
 const DISCOVERY_QUERY =
-  'president OR minister OR senator OR CEO OR actor OR singer OR athlete OR champion OR arrested OR elected OR appointed';
+  '(president OR minister OR senator OR CEO OR actor OR singer OR athlete OR champion OR arrested OR elected OR appointed)';
 
 for (const [timespan, gdeltMinutes] of Object.entries(GDELT_TIMESPANS)) {
   console.log(`\n[${timespan}] Fetching articles...`);
@@ -154,7 +154,7 @@ for (const [timespan, gdeltMinutes] of Object.entries(GDELT_TIMESPANS)) {
 
   for (let bi = 0; bi < batches.length; bi++) {
     const batch = batches[bi]!;
-    const orQuery = batch.map(p => `"${p.displayName}"`).join(' OR ');
+    const orQuery = `(${batch.map(p => `"${p.displayName}"`).join(' OR ')})`;
     const articles = await fetchGDELTArticles(orQuery, gdeltMinutes);
     allArticles.push(...articles);
     callCount++;
