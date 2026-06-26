@@ -15,7 +15,9 @@ interface NewsArticle {
 function parseGoogleNewsRSS(xml: string): NewsArticle[] {
   const items: NewsArticle[] = [];
   const blocks = [...xml.matchAll(/<item>([\s\S]*?)<\/item>/g)];
-  for (const [, content] of blocks.slice(0, 10)) {
+  for (const match of blocks.slice(0, 10)) {
+    const content = match[1];
+    if (!content) continue;
     const rawTitle =
       content.match(/<title><!\[CDATA\[([\s\S]*?)\]\]><\/title>/)?.[1] ??
       content.match(/<title>([\s\S]*?)<\/title>/)?.[1] ?? '';
