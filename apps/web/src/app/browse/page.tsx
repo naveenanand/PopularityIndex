@@ -1,7 +1,7 @@
 export const revalidate = 300;
 
 import Link from 'next/link';
-import { browsePeople, searchPeople } from '../../lib/api';
+import { browsePeople, searchPeople, getCategories } from '../../lib/api';
 
 type SearchParams = Promise<{ q?: string; page?: string }>;
 
@@ -14,9 +14,10 @@ export default async function BrowsePage({ searchParams }: { searchParams: Searc
 
   const isSearch = !!q && q.trim().length >= 2;
 
-  const [browseResult, searchResults] = await Promise.all([
+  const [browseResult, searchResults, categories] = await Promise.all([
     !isSearch ? browsePeople(offset, PAGE_SIZE) : Promise.resolve({ items: [], total: 0 }),
     isSearch ? searchPeople(q.trim()) : Promise.resolve([]),
+    !isSearch ? getCategories() : Promise.resolve([]),
   ]);
 
   const items = isSearch ? searchResults : browseResult.items;
@@ -41,19 +42,13 @@ export default async function BrowsePage({ searchParams }: { searchParams: Searc
           <span>/</span>
           <span className="text-zinc-500">Browse</span>
         </div>
-        <div className="flex items-start justify-between gap-4 flex-wrap">
-          <div>
-            <h1 className="text-3xl font-black text-white">Browse People</h1>
-            <p className="text-zinc-500 text-sm mt-1">
-              {isSearch
-                ? `${total.toLocaleString()} result${total !== 1 ? 's' : ''} for "${q}"`
-                : `${total.toLocaleString()} people in the database`}
-            </p>
-          </div>
-          <div className="text-xs text-zinc-600 text-right">
-            <p>Import more records with</p>
-            <code className="bg-zinc-800 text-zinc-300 px-2 py-0.5 rounded font-mono">pnpm bulk:import</code>
-          </div>
+        <div>
+          <h1 className="text-3xl font-black text-white">Browse People</h1>
+          <p className="text-zinc-500 text-sm mt-1">
+            {isSearch
+              ? `${total.toLocaleString()} result${total !== 1 ? 's' : ''} for "${q}"`
+              : `${total.toLocaleString()} people in the database`}
+          </p>
         </div>
       </div>
 
@@ -86,6 +81,27 @@ export default async function BrowsePage({ searchParams }: { searchParams: Searc
           </Link>
         )}
       </form>
+
+      {/* Category chips — only on non-search view */}
+      {!isSearch && categories.length > 0 && (
+        <div className="space-y-2">
+          <p className="text-xs text-zinc-600 uppercase tracking-widest font-semibold">Browse by category</p>
+          <div className="flex flex-wrap gap-2">
+            {categories.slice(0, 20).map(cat => (
+              <Link
+                key={cat.slug}
+                href={`/browse/${cat.slug}`}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 hover:border-zinc-700 text-sm text-zinc-300 hover:text-white transition-all"
+              >
+                <span className="capitalize">{cat.label}</span>
+                <span className="text-xs text-zinc-600 font-mono">
+                  {cat.scoredCount > 0 ? cat.scoredCount : cat.count}
+                </span>
+              </Link>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Results grid */}
       {items.length === 0 ? (

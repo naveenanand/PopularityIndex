@@ -77,7 +77,13 @@ export default async function PersonPage({ params }: PageProps) {
             </div>
           </div>
 
-          <div className="ml-auto flex-shrink-0 pb-1">
+          <div className="ml-auto flex-shrink-0 pb-1 flex items-center gap-3">
+            <Link
+              href={`/compare?a=${person.wikidataQid}`}
+              className="text-xs text-zinc-600 hover:text-zinc-400 transition-colors border border-zinc-800 rounded-lg px-2.5 py-1"
+            >
+              Compare ↔
+            </Link>
             <Link href="/" className="text-sm text-zinc-600 hover:text-zinc-400 transition-colors">
               ← Back
             </Link>
