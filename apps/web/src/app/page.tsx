@@ -30,9 +30,9 @@ interface ViewConfig {
 const VIEW_CONFIG: Record<SortKey, ViewConfig> = {
   popularity:   { rankLabel: 'Most Popular',       carouselTitle: 'Most Popular All Time',  carouselIcon: '⭐', gridScoreLabel: 'Popularity', updatedNote: 'Updated every hour' },
   heat:         { rankLabel: 'Hottest Right Now',  carouselTitle: 'Hottest Right Now',      carouselIcon: '🌡️', gridScoreLabel: 'Heat',       updatedNote: 'Updated every hour' },
-  trending_1h:  { rankLabel: 'Trending This Hour', carouselTitle: 'Trending This Hour',     carouselIcon: '🔥', gridScoreLabel: 'Articles',   updatedNote: 'Updated every 15 min' },
-  trending_24h: { rankLabel: 'Trending Today',     carouselTitle: 'Trending Today',         carouselIcon: '🔥', gridScoreLabel: 'Articles',   updatedNote: 'Updated every 15 min' },
-  trending_30d: { rankLabel: 'Trending This Month',carouselTitle: 'Trending This Month',    carouselIcon: '🔥', gridScoreLabel: 'Articles',   updatedNote: 'Updated every 15 min' },
+  trending_1h:  { rankLabel: 'Trending This Hour', carouselTitle: 'Trending This Hour',  carouselIcon: '🔥', gridScoreLabel: 'Wiki Views', updatedNote: 'Updated every 15 min' },
+  trending_24h: { rankLabel: 'Trending Today',     carouselTitle: 'Trending Today',      carouselIcon: '🔥', gridScoreLabel: 'Wiki Views', updatedNote: 'Updated every 15 min' },
+  trending_30d: { rankLabel: 'Trending This Month',carouselTitle: 'Trending This Month', carouselIcon: '🔥', gridScoreLabel: 'Heat',       updatedNote: 'Updated every 15 min' },
 };
 
 // Trending tabs show top 100, no pagination
@@ -60,16 +60,25 @@ function leaderboardToView(entry: LeaderboardEntry, sort: 'popularity' | 'heat')
   };
 }
 
-function trendingToView(entry: TrendingEntry, rank: number): ViewPerson {
+function trendingToView(entry: TrendingEntry, rank: number, sortKey: SortKey): ViewPerson {
+  // 30d: no per-person view count is meaningful — use heat score
+  // 1h/24h: articleCount stores Wikipedia page views; fall back to heat score when
+  //         the Wikipedia hourly endpoint has a lag and returns nothing (articleCount === 0)
+  const use30d = sortKey === 'trending_30d';
+  const hasViews = !use30d && entry.articleCount > 0;
+  const primaryScore  = use30d ? Math.round(entry.heatScore) : (hasViews ? entry.articleCount : Math.round(entry.heatScore));
+  const primaryLabel  = use30d ? 'Heat' : (hasViews ? 'Wiki Views' : 'Heat');
+  const primaryColor  = (use30d || !hasViews) ? 'text-orange-400' : 'text-red-400';
+
   return {
     wikidataQid: entry.wikidataQid,
     displayName: entry.displayName,
     photoUrl: entry.photoUrl,
     occupationSummary: entry.occupationSummary,
     rank,
-    primaryScore: entry.articleCount,
-    primaryLabel: 'Articles',
-    primaryColor: 'text-red-400',
+    primaryScore,
+    primaryLabel,
+    primaryColor,
     secondaryScore: Math.round(entry.popularityScore),
     secondaryLabel: 'Popularity',
     secondaryColor: 'text-amber-400',
@@ -96,7 +105,7 @@ export default async function HomePage({ searchParams }: { searchParams: SearchP
   ]);
 
   const viewPeople: ViewPerson[] = isTrending
-    ? trendingEntries.map((e, i) => trendingToView(e, i + 1))
+    ? trendingEntries.map((e, i) => trendingToView(e, i + 1, sortKey))
     : leaderboardEntries.map(e =>
         leaderboardToView(e, sortKey === 'heat' ? 'heat' : 'popularity'),
       );
