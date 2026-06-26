@@ -43,12 +43,9 @@ interface WikipediaTopArticle {
   rank: number;
 }
 
-// Fetch Wikipedia top articles for a given date/hour
-// Date format: YYYY/MM/DD, hour format: HH (00-23)
-async function fetchWikipediaTop(year: string, month: string, day: string, hour?: string): Promise<WikipediaTopArticle[]> {
-  const path = hour
-    ? `metrics/pageviews/top/en.wikipedia.org/all-access/${year}/${month}/${day}/${hour}`
-    : `metrics/pageviews/top/en.wikipedia.org/all-access/${year}/${month}/${day}`;
+// Fetch Wikipedia daily top articles (used for 24h trending)
+async function fetchWikipediaTop(year: string, month: string, day: string): Promise<WikipediaTopArticle[]> {
+  const path = `metrics/pageviews/top/en.wikipedia.org/all-access/${year}/${month}/${day}`;
   const url = `https://wikimedia.org/api/rest_v1/${path}`;
   try {
     const res = await fetch(url, {
@@ -69,25 +66,60 @@ async function fetchWikipediaTop(year: string, month: string, day: string, hour?
   }
 }
 
-// Try Wikipedia hourly data going back up to maxHoursBack hours.
-// Wikimedia's hourly endpoint can lag 2-3 hours, not just 1.
-async function fetchWikipediaHourly(now: Date, maxHoursBack = 4): Promise<WikipediaTopArticle[]> {
-  const pad = (n: number) => String(n).padStart(2, '0');
-  for (let back = 0; back <= maxHoursBack; back++) {
-    const t = new Date(now);
-    t.setUTCHours(t.getUTCHours() - back);
-    const articles = await fetchWikipediaTop(
-      t.getUTCFullYear().toString(),
-      pad(t.getUTCMonth() + 1),
-      pad(t.getUTCDate()),
-      pad(t.getUTCHours()),
-    );
-    if (articles.length > 0) {
-      console.log(`  Found data at -${back}h (${pad(t.getUTCHours())}:xx UTC)`);
-      return articles;
-    }
+// Fetch hourly views for a specific Wikipedia article using the per-article endpoint.
+// This endpoint is always available and has no meaningful lag, unlike top-articles/hourly.
+async function fetchPersonHourlyViews(title: string, startHour: string, endHour: string): Promise<number> {
+  const encoded = encodeURIComponent(title);
+  const url = `https://wikimedia.org/api/rest_v1/metrics/pageviews/per-article/en.wikipedia.org/all-access/user/${encoded}/hourly/${startHour}/${endHour}`;
+  try {
+    const res = await fetch(url, {
+      headers: { 'User-Agent': UA },
+      signal: AbortSignal.timeout(8_000),
+    });
+    if (!res.ok) return 0;
+    const data = await res.json() as { items?: Array<{ views: number }> };
+    return (data.items ?? []).reduce((sum, item) => sum + item.views, 0);
+  } catch {
+    return 0;
   }
-  return [];
+}
+
+// Query the last 2 complete UTC hours for all tracked people in parallel batches.
+// Returns only people with non-zero views, sorted by views descending.
+async function fetchAllPersonHourlyViews(
+  people: ScoredPerson[],
+): Promise<Array<{ person: ScoredPerson; views: number }>> {
+  const now = new Date();
+  const pad = (n: number) => String(n).padStart(2, '0');
+  const fmt = (d: Date) =>
+    `${d.getUTCFullYear()}${pad(d.getUTCMonth() + 1)}${pad(d.getUTCDate())}${pad(d.getUTCHours())}`;
+
+  const end = new Date(now);
+  end.setUTCHours(end.getUTCHours() - 1);   // last complete hour
+  const start = new Date(end);
+  start.setUTCHours(start.getUTCHours() - 1); // one hour before that
+
+  const startStr = fmt(start);
+  const endStr   = fmt(end);
+  console.log(`\n[1h] Querying per-article views ${startStr}–${endStr} for ${people.length} people...`);
+
+  const results: Array<{ person: ScoredPerson; views: number }> = [];
+  const CONCURRENCY = 10;
+
+  for (let i = 0; i < people.length; i += CONCURRENCY) {
+    const batch = people.slice(i, i + CONCURRENCY);
+    const batchResults = await Promise.all(batch.map(async p => {
+      const title = p.displayName.replace(/ /g, '_');
+      const views = await fetchPersonHourlyViews(title, startStr, endStr);
+      return { person: p, views };
+    }));
+    results.push(...batchResults);
+    if (i + CONCURRENCY < people.length) await delay(150);
+  }
+
+  const matched = results.filter(r => r.views > 0);
+  console.log(`  → ${matched.length} people with views in this window`);
+  return matched;
 }
 
 /**
@@ -301,28 +333,17 @@ async function autoDiscoverPeople(
   return added;
 }
 
-// --- trending:1h (Wikipedia hourly views) ---
-// Wikimedia's hourly endpoint lags 1-3 hours. Try going back up to 4 hours
-// before falling back to heatScore.
-console.log('\n[1h] Fetching Wikipedia top articles (trying up to 4 hours back)...');
-const hourlyArticles = await fetchWikipediaHourly(now, 4);
-console.log(`  → ${hourlyArticles.length} Wikipedia articles total`);
+// --- trending:1h (per-article Wikipedia hourly views) ---
+// Query each tracked person directly using the per-article endpoint.
+// This is always available — no lag issues like the top-articles hourly endpoint.
+const hourlyData = await fetchAllPersonHourlyViews(scoredPeople);
 
-const hourlyMatches = hourlyArticles
-  .filter(a => isPersonArticle(a.article))
-  .filter(a => titleToPerson.has(a.article));
-
-// Rank by liveHeat (derived from Wikipedia views) — changes every run.
-const trending1h = hourlyMatches
-  .map(a => {
-    const p = titleToPerson.get(a.article)!;
-    return makeTrendingEntry(p, 0, a.views, a.views, '1h');
-  })
-  .sort((a, b) => b.liveHeat - a.liveHeat)
+const trending1h = hourlyData
+  .map(({ person: p, views }) => makeTrendingEntry(p, 0, views, views, '1h'))
+  .sort((a, b) => b.trendingScore - a.trendingScore)
   .slice(0, 50)
   .map((e, i) => ({ ...e, rank: i + 1 }));
 
-// Only fall back to heatScore if both the current and previous hour returned nothing
 const trending1hFinal = trending1h.length > 0
   ? trending1h
   : scoredPeople
@@ -338,7 +359,7 @@ await db
     target: cacheEntries.key,
     set: { data: trending1hFinal, updatedAt: new Date() },
   });
-console.log(`[1h] Stored ${trending1hFinal.length} entries (${hourlyMatches.length} from Wikipedia, rest from heatScore)`);
+console.log(`[1h] Stored ${trending1hFinal.length} entries (${hourlyData.length} from Wikipedia per-article)`);
 
 await delay(2_000);
 
@@ -430,15 +451,12 @@ await db
 console.log(`\n[news_feed] Stored ${newsFeed.length} entries`);
 
 // --- Heat score updates for people with big Wikipedia view spikes ---
-// Compare this hour's views to their popularityScore as a proxy for "baseline".
-// If hourly views are very high (> 10k) and the person has high popularity, boost heat.
+// Boost heat score for anyone with very high hourly views (> 10k).
 const heatUpdates: Array<{ name: string; oldHeat: number; newHeat: number }> = [];
-for (const match of hourlyMatches) {
-  const person = titleToPerson.get(match.article);
-  if (!person || person.personId === 0) continue;
-  if (match.views < 10_000) continue; // only boost for very high hourly views
+for (const { person, views } of hourlyData) {
+  if (views < 10_000) continue;
 
-  const newsBoost = Math.min(40, Math.log1p(match.views / 1000) * 8);
+  const newsBoost = Math.min(40, Math.log1p(views / 1000) * 8);
   const newHeat = Math.min(100, person.heatScore + newsBoost);
   if (newHeat - person.heatScore < 3) continue;
 
@@ -457,10 +475,10 @@ for (const match of hourlyMatches) {
       popularity_score: person.popularityScore,
       heat_score: newHeat,
       coverage_score: person.coverageScore,
-      wikipedia_views_1h: match.views,
+      wikipedia_views_1h: views,
       heat_boost_from_views: newsBoost,
       top_contributors: [
-        { signal: 'wikipedia_views_1h', impact: `+${newsBoost.toFixed(1)}`, reason: `${match.views.toLocaleString()} Wikipedia views in the last hour` },
+        { signal: 'wikipedia_views_1h', impact: `+${newsBoost.toFixed(1)}`, reason: `${views.toLocaleString()} Wikipedia views in the last hour` },
       ],
     },
   });
@@ -474,9 +492,8 @@ if (heatUpdates.length > 0) {
   }
 }
 
-// Auto-discover: add new people from daily and hourly Wikipedia trending
-// Uses daily articles (larger dataset) as the primary source
-const allArticlesForDiscovery = dailyArticles.length > 0 ? dailyArticles : hourlyArticles;
+// Auto-discover: add new people from daily Wikipedia trending
+const allArticlesForDiscovery = dailyArticles;
 const discovered = await autoDiscoverPeople(allArticlesForDiscovery, knownTitles);
 if (discovered > 0) {
   console.log(`\n[discover] Added ${discovered} new people. Run \`pnpm score:calculate\` to score them.`);
