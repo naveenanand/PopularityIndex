@@ -8,9 +8,9 @@ import { NewsSection, NewsSectionSkeleton } from '../../../components/person/New
 import { formatDate, formatScore, coverageBadgeColor } from '../../../lib/formatters';
 import type { ScoreExplanation } from '@pai/shared';
 
-// Core page is cached 1 hour — scores and bio don't change often.
-// The NewsSection streams in separately via Suspense so it never blocks the initial HTML.
-export const revalidate = 3600;
+// Revalidate every 60s so news/cache updates appear quickly.
+// Scores and bio are fast DB reads so the cost is low.
+export const revalidate = 60;
 
 interface PageProps {
   params: Promise<{ wikidataQid: string }>;
