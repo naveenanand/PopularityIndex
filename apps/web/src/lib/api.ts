@@ -363,8 +363,10 @@ export async function getPersonTopArticles(displayName: string, maxRecords = 5):
   try {
     const res = await fetch(`https://api.gdeltproject.org/api/v2/doc/doc?${params}`, {
       headers: { 'User-Agent': WIKIMEDIA_UA },
-      next: { revalidate: 3600 },
-      signal: AbortSignal.timeout(3000),
+      // 5-min cache: prevents hammering GDELT on every page hit while not
+      // locking in a rate-limit response for a full hour.
+      next: { revalidate: 300 },
+      signal: AbortSignal.timeout(7000),
     });
     if (!res.ok) return [];
     const text = await res.text();

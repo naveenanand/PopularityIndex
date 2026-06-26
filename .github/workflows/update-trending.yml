@@ -9,14 +9,18 @@ on:
 jobs:
   update-trending:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
+    env:
+      # pnpm/action-setup@v4 and actions/setup-node@v4 run on Node 20 internally.
+      # GitHub deprecated Node 20 on runners (Sep 2025). This allows them to run.
+      ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION: 'true'
 
     steps:
       - uses: actions/checkout@v4
 
       - uses: pnpm/action-setup@v4
         with:
-          version: 9
+          version: 10
 
       - uses: actions/setup-node@v4
         with:

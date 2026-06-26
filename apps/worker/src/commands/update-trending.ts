@@ -47,8 +47,10 @@ const GDELT_TIMESPANS: Record<string, string> = {
   '30d': '20160', // 14 days — 30d (43200) hits complexity limits with long OR chains
 };
 
-const BATCH_SIZE = 10;
-const RATE_LIMIT_MS = 6_000;
+// 15 names per batch ≈ 400 chars with quotes/OR — under GDELT's ~500-char limit.
+// GitHub Actions IPs are clean so 3s between calls is enough.
+const BATCH_SIZE = 15;
+const RATE_LIMIT_MS = 3_000;
 
 async function fetchGDELTArticles(query: string, gdeltMinutes: string): Promise<GDELTArticle[]> {
   const params = new URLSearchParams({
@@ -124,7 +126,7 @@ const scoredPeople: ScoredPerson[] = await db
     ),
   )
   .orderBy(desc(scoreSnapshots.popularityScore))
-  .limit(500);
+  .limit(200);
 
 if (scoredPeople.length === 0) {
   console.log('No scored people found. Run `pnpm score:calculate` first.');
