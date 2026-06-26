@@ -52,30 +52,6 @@ interface ScoredPerson {
   calculatedAt: Date;
 }
 
-// Wikipedia daily top-articles endpoint (used for 24h trending)
-async function fetchWikipediaTop(
-  year: string, month: string, day: string,
-): Promise<Array<{ article: string; views: number }>> {
-  const path = `metrics/pageviews/top/en.wikipedia.org/all-access/${year}/${month}/${day}`;
-  try {
-    const res = await fetch(`https://wikimedia.org/api/rest_v1/${path}`, {
-      headers: { 'User-Agent': UA },
-      signal: AbortSignal.timeout(12_000),
-      cache: 'no-store',
-    });
-    if (!res.ok) {
-      console.log(`[wiki] ${res.status} for ${path}`);
-      return [];
-    }
-    const data = await res.json() as { items?: Array<{ articles: Array<{ article: string; views: number }> }> };
-    const articles = data.items?.[0]?.articles ?? [];
-    console.log(`[wiki] 200 for ${path} → ${articles.length} articles`);
-    return articles;
-  } catch (err) {
-    console.log(`[wiki] error for ${path}:`, err);
-    return [];
-  }
-}
 
 /**
  * Fetch hourly Wikipedia pageviews for a specific person using the per-article
