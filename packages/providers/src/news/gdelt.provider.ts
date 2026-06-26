@@ -92,15 +92,13 @@ export class GDELTNewsProvider implements AttentionProvider {
     }
 
     try {
-      const [articles24h, articles7d, articles30d] = await Promise.all([
+      const [articles24h, articles7d] = await Promise.all([
         fetchArticles(name, '24h'),
         fetchArticles(name, '7d'),
-        fetchArticles(name, '30d'),
       ]);
 
       const count24h = articles24h.length;
       const count7d = articles7d.length;
-      const count30d = Math.max(count7d, articles30d.length);
       const uniqueDomains = new Set(articles7d.map(a => a.domain)).size;
       const sourceDiversity = count7d > 0 ? Math.min(1, (uniqueDomains / count7d) * 3) : 0;
 

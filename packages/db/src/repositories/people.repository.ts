@@ -1,4 +1,4 @@
-import { eq, ilike, or, desc, asc } from 'drizzle-orm';
+import { eq, ilike, or, asc } from 'drizzle-orm';
 import type { Db } from '../client.js';
 import { people, personAliases, wikipediaPages } from '../schema/index.js';
 
