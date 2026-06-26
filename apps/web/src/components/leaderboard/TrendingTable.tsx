@@ -32,10 +32,10 @@ interface Props {
 }
 
 export function TrendingTable({ entries, timespan }: Props) {
-  if (entries.length === 0 || entries.every(e => e.articleCount === 0)) {
+  if (entries.length === 0) {
     const hint = timespan === '1h'
-      ? 'The 1-hour window is very narrow — try Last 24h or Last 30d for results.'
-      : 'GDELT data may be loading. Refresh in a moment or try a wider time window.';
+      ? 'The 1-hour window is narrow — try Last 24h or Last 30d for results.'
+      : 'Trending data is loading. Refresh in a moment or try a wider time window.';
     return (
       <div className="text-center py-20 text-zinc-600">
         <p className="text-lg font-medium text-zinc-400">No articles found in the {PERIOD_LABEL[timespan] ?? timespan}</p>
@@ -44,7 +44,7 @@ export function TrendingTable({ entries, timespan }: Props) {
     );
   }
 
-  const active = entries.filter(e => e.articleCount > 0);
+  const active = entries;
 
   return (
     <div className="overflow-x-auto">
@@ -92,7 +92,7 @@ export function TrendingTable({ entries, timespan }: Props) {
           ))}
         </tbody>
       </table>
-      <p className="text-[10px] text-zinc-700 px-5 py-3">Source: GDELT Project · {active.length} people with coverage in {PERIOD_LABEL[timespan]}</p>
+      <p className="text-[10px] text-zinc-700 px-5 py-3">Source: Wikipedia · {active.length} people trending in {PERIOD_LABEL[timespan]}</p>
     </div>
   );
 }
