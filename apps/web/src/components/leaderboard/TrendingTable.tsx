@@ -26,6 +26,13 @@ const PERIOD_LABEL: Record<string, string> = {
   '30d': 'last 30 days',
 };
 
+// 1h uses Wikipedia page views; 24h/30d use news article counts
+const ACTIVITY_LABEL: Record<string, string> = {
+  '1h':  'Wikipedia Views',
+  '24h': 'News Articles',
+  '30d': 'News Articles',
+};
+
 interface Props {
   entries: TrendingEntry[];
   timespan: '1h' | '24h' | '30d';
@@ -53,7 +60,7 @@ export function TrendingTable({ entries, timespan }: Props) {
           <tr className="border-b border-zinc-800 text-left text-xs text-zinc-600 uppercase tracking-wide">
             <th className="pb-3 pl-5 pr-4 w-10">#</th>
             <th className="pb-3 pr-4 py-4">Name</th>
-            <th className="pb-3 pr-4 text-right">Articles ({PERIOD_LABEL[timespan]})</th>
+            <th className="pb-3 pr-4 text-right">{ACTIVITY_LABEL[timespan] ?? 'Activity'}</th>
             <th className="pb-3 pr-5 text-right">Popularity</th>
           </tr>
         </thead>
@@ -83,7 +90,11 @@ export function TrendingTable({ entries, timespan }: Props) {
                 </Link>
               </td>
               <td className="py-3 pr-4 text-right">
-                <span className="text-lg font-bold text-red-400">{entry.articleCount}</span>
+                <span className="text-lg font-bold text-red-400">
+                  {timespan === '1h' && entry.articleCount > 999
+                    ? `${(entry.articleCount / 1000).toFixed(0)}K`
+                    : entry.articleCount}
+                </span>
               </td>
               <td className="py-3 pr-5 text-right">
                 <span className="text-sm font-semibold text-amber-400">{Math.round(entry.popularityScore)}</span>
@@ -92,7 +103,9 @@ export function TrendingTable({ entries, timespan }: Props) {
           ))}
         </tbody>
       </table>
-      <p className="text-[10px] text-zinc-700 px-5 py-3">Source: Wikipedia · {active.length} people trending in {PERIOD_LABEL[timespan]}</p>
+      <p className="text-[10px] text-zinc-700 px-5 py-3">
+        Source: {timespan === '1h' ? 'Wikipedia hourly page views' : 'GDELT news index'} · {active.length} people trending in {PERIOD_LABEL[timespan]}
+      </p>
     </div>
   );
 }
