@@ -55,12 +55,39 @@ async function fetchWikipediaTop(year: string, month: string, day: string, hour?
       headers: { 'User-Agent': UA },
       signal: AbortSignal.timeout(15_000),
     });
-    if (!res.ok) return [];
+    if (!res.ok) {
+      console.log(`  Wikipedia API ${res.status} for ${path}`);
+      return [];
+    }
     const data = await res.json() as { items?: Array<{ articles: WikipediaTopArticle[] }> };
-    return data.items?.[0]?.articles ?? [];
-  } catch {
+    const articles = data.items?.[0]?.articles ?? [];
+    console.log(`  Wikipedia API 200 for ${path} → ${articles.length} articles`);
+    return articles;
+  } catch (err) {
+    console.log(`  Wikipedia API error for ${path}:`, err);
     return [];
   }
+}
+
+// Try Wikipedia hourly data going back up to maxHoursBack hours.
+// Wikimedia's hourly endpoint can lag 2-3 hours, not just 1.
+async function fetchWikipediaHourly(now: Date, maxHoursBack = 4): Promise<WikipediaTopArticle[]> {
+  const pad = (n: number) => String(n).padStart(2, '0');
+  for (let back = 0; back <= maxHoursBack; back++) {
+    const t = new Date(now);
+    t.setUTCHours(t.getUTCHours() - back);
+    const articles = await fetchWikipediaTop(
+      t.getUTCFullYear().toString(),
+      pad(t.getUTCMonth() + 1),
+      pad(t.getUTCDate()),
+      pad(t.getUTCHours()),
+    );
+    if (articles.length > 0) {
+      console.log(`  Found data at -${back}h (${pad(t.getUTCHours())}:xx UTC)`);
+      return articles;
+    }
+  }
+  return [];
 }
 
 /**
@@ -275,24 +302,12 @@ async function autoDiscoverPeople(
   return added;
 }
 
-// --- trending:1h (current hour Wikipedia views) ---
-// Wikimedia's hourly endpoint lags ~1 hour: the current hour's data is often
-// unpublished. Try the current hour first, then fall back to the previous
-// completed hour. Only use heatScore as a last resort when both are empty.
-console.log('\n[1h] Fetching Wikipedia top articles for current hour...');
-let hourlyArticles = await fetchWikipediaTop(year, month, day, hour);
-
-if (hourlyArticles.length === 0) {
-  const prev = new Date(now);
-  prev.setUTCHours(prev.getUTCHours() - 1);
-  const prevYear  = prev.getUTCFullYear().toString();
-  const prevMonth = String(prev.getUTCMonth() + 1).padStart(2, '0');
-  const prevDay   = String(prev.getUTCDate()).padStart(2, '0');
-  const prevHour  = String(prev.getUTCHours()).padStart(2, '0');
-  console.log(`  Current hour empty — trying previous hour (${prevHour}:xx UTC)...`);
-  hourlyArticles = await fetchWikipediaTop(prevYear, prevMonth, prevDay, prevHour);
-}
-console.log(`  → ${hourlyArticles.length} Wikipedia articles`);
+// --- trending:1h (Wikipedia hourly views) ---
+// Wikimedia's hourly endpoint lags 1-3 hours. Try going back up to 4 hours
+// before falling back to heatScore.
+console.log('\n[1h] Fetching Wikipedia top articles (trying up to 4 hours back)...');
+const hourlyArticles = await fetchWikipediaHourly(now, 4);
+console.log(`  → ${hourlyArticles.length} Wikipedia articles total`);
 
 const hourlyMatches = hourlyArticles
   .filter(a => isPersonArticle(a.article))

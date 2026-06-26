@@ -65,12 +65,40 @@ async function fetchWikipediaTop(
       signal: AbortSignal.timeout(12_000),
       cache: 'no-store',
     });
-    if (!res.ok) return [];
+    if (!res.ok) {
+      console.log(`[wiki] ${res.status} for ${path}`);
+      return [];
+    }
     const data = await res.json() as { items?: Array<{ articles: Array<{ article: string; views: number }> }> };
-    return data.items?.[0]?.articles ?? [];
-  } catch {
+    const articles = data.items?.[0]?.articles ?? [];
+    console.log(`[wiki] 200 for ${path} → ${articles.length} articles`);
+    return articles;
+  } catch (err) {
+    console.log(`[wiki] error for ${path}:`, err);
     return [];
   }
+}
+
+// Wikimedia hourly endpoint lags 1-3+ hours. Try going back up to maxBack hours.
+async function fetchWikipediaHourly(
+  now: Date, maxBack = 4,
+): Promise<Array<{ article: string; views: number }>> {
+  const pad = (n: number) => String(n).padStart(2, '0');
+  for (let back = 0; back <= maxBack; back++) {
+    const t = new Date(now);
+    t.setUTCHours(t.getUTCHours() - back);
+    const articles = await fetchWikipediaTop(
+      t.getUTCFullYear().toString(),
+      pad(t.getUTCMonth() + 1),
+      pad(t.getUTCDate()),
+      pad(t.getUTCHours()),
+    );
+    if (articles.length > 0) {
+      console.log(`[1h] Using -${back}h data (${pad(t.getUTCHours())}:xx UTC)`);
+      return articles;
+    }
+  }
+  return [];
 }
 
 /**
@@ -189,26 +217,11 @@ export async function GET(request: Request) {
   const results: Record<string, number> = {};
 
   // ── trending:1h — Wikipedia hourly page views ──────────────────────────────
-  // Wikimedia publishes hourly top-articles data with ~1h lag. Try the current
-  // hour, then fall back to the previous completed hour, then to heat score.
+  // Wikimedia publishes hourly top-articles data with 1-3+ hour lag.
+  // Try up to 4 hours back before falling through to heat score.
   const now = new Date();
-  const pad = (n: number) => String(n).padStart(2, '0');
-  const curYear  = now.getUTCFullYear().toString();
-  const curMonth = pad(now.getUTCMonth() + 1);
-  const curDay   = pad(now.getUTCDate());
-  const curHour  = pad(now.getUTCHours());
 
-  let wikiHourly = await fetchWikipediaTop(curYear, curMonth, curDay, curHour);
-  if (wikiHourly.length === 0) {
-    const prev = new Date(now);
-    prev.setUTCHours(prev.getUTCHours() - 1);
-    wikiHourly = await fetchWikipediaTop(
-      prev.getUTCFullYear().toString(),
-      pad(prev.getUTCMonth() + 1),
-      pad(prev.getUTCDate()),
-      pad(prev.getUTCHours()),
-    );
-  }
+  const wikiHourly = await fetchWikipediaHourly(now, 4);
 
   const hourlyMatches = wikiHourly
     .filter(a => isPersonArticle(a.article))
