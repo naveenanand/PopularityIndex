@@ -173,6 +173,30 @@ async function lookupWikidataQid(title: string): Promise<string | null> {
   }
 }
 
+// Verify a Wikidata QID is a human (P31=Q5) and optionally fetch occupation label
+async function fetchHumanInfo(qid: string): Promise<{ isHuman: boolean; occupation: string | null }> {
+  const sparql = `SELECT ?isHuman (SAMPLE(?occLabel) AS ?occupation) WHERE {
+  BIND(EXISTS { wd:${qid} wdt:P31 wd:Q5 } AS ?isHuman)
+  OPTIONAL { wd:${qid} wdt:P106 ?occ . ?occ rdfs:label ?occLabel FILTER(LANG(?occLabel)="en") }
+} GROUP BY ?isHuman`;
+  try {
+    const res = await fetch(
+      `https://query.wikidata.org/sparql?query=${encodeURIComponent(sparql)}&format=json`,
+      { headers: { 'User-Agent': UA, Accept: 'application/sparql-results+json' }, signal: AbortSignal.timeout(8_000) },
+    );
+    if (!res.ok) return { isHuman: false, occupation: null };
+    const json = await res.json() as { results: { bindings: Array<Record<string, { value: string }>> } };
+    const row = json.results.bindings[0];
+    if (!row) return { isHuman: false, occupation: null };
+    return {
+      isHuman: row['isHuman']?.value === 'true',
+      occupation: row['occupation']?.value ?? null,
+    };
+  } catch {
+    return { isHuman: false, occupation: null };
+  }
+}
+
 // Attempt to add newly discovered people from Wikipedia trending
 async function autoDiscoverPeople(
   articles: WikipediaTopArticle[],
@@ -204,8 +228,16 @@ async function autoDiscoverPeople(
       .limit(1);
 
     if (existing.length > 0) {
-      // Person exists under a different display name — update the title map
       console.log(`  [skip] ${displayName} (${qid}) already in DB`);
+      continue;
+    }
+
+    // Verify this is a human — skip rivers, cities, films, etc.
+    const { isHuman, occupation } = await fetchHumanInfo(qid);
+    await delay(500);
+
+    if (!isHuman) {
+      console.log(`  [skip] ${displayName} (${qid}) is not a human entity`);
       continue;
     }
 
@@ -215,11 +247,11 @@ async function autoDiscoverPeople(
       wikidataQid: qid,
       displayName,
       normalizedName,
-      occupationSummary: null,
+      occupationSummary: occupation,
       photoUrl: null,
     }).onConflictDoNothing();
 
-    console.log(`  [added] ${displayName} (${qid}) — ${article.views.toLocaleString()} views`);
+    console.log(`  [added] ${displayName} (${qid}) — ${article.views.toLocaleString()} views${occupation ? ` · ${occupation}` : ''}`);
     added++;
   }
 
