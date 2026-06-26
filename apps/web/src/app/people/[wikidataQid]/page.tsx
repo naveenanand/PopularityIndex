@@ -1,10 +1,9 @@
-import { Suspense } from 'react';
 import { notFound } from 'next/navigation';
 import Link from 'next/link';
 import { getPersonWithScores } from '../../../lib/api';
 import { ScoreHistoryChart } from '../../../components/person/ScoreHistoryChart';
 import { DataSourceBadge } from '../../../components/shared/DataSourceBadge';
-import { NewsSection, NewsSectionSkeleton } from '../../../components/person/NewsSection';
+import { NewsSection } from '../../../components/person/NewsSection';
 import { formatDate, formatScore, coverageBadgeColor } from '../../../lib/formatters';
 import type { ScoreExplanation } from '@pai/shared';
 
@@ -114,10 +113,8 @@ export default async function PersonPage({ params }: PageProps) {
           </div>
         )}
 
-        {/* News + Why Trending — streams in via Suspense, never blocks initial render */}
-        <Suspense fallback={<NewsSectionSkeleton />}>
-          <NewsSection displayName={person.displayName} wikidataQid={wikidataQid} />
-        </Suspense>
+        {/* News — client component, polls /api/news/[qid] every 60s */}
+        <NewsSection wikidataQid={wikidataQid} />
 
         {/* Score history */}
         <div className="bg-zinc-900 rounded-2xl border border-zinc-800 p-6">
