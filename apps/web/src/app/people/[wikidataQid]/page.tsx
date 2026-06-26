@@ -1,10 +1,12 @@
 import { notFound } from 'next/navigation';
 import Link from 'next/link';
+import { Suspense } from 'react';
 import { getPersonWithScores } from '../../../lib/api';
 import { ScoreHistoryChart } from '../../../components/person/ScoreHistoryChart';
 import { DataSourceBadge } from '../../../components/shared/DataSourceBadge';
 import { NewsSection } from '../../../components/person/NewsSection';
 import { SummarySection } from '../../../components/person/SummarySection';
+import { BioFactsSection } from '../../../components/person/BioFactsSection';
 import { formatDate, formatScore, coverageBadgeColor } from '../../../lib/formatters';
 import type { ScoreExplanation } from '@pai/shared';
 
@@ -122,6 +124,11 @@ export default async function PersonPage({ params }: PageProps) {
 
         {/* AI summary — fetches from /api/summary/[qid], cached 24h */}
         <SummarySection wikidataQid={wikidataQid} displayName={person.displayName} />
+
+        {/* Bio facts — DOB, family, party, team, companies, fun fact (Wikidata, 7-day cache) */}
+        <Suspense fallback={null}>
+          <BioFactsSection wikidataQid={wikidataQid} />
+        </Suspense>
 
         {/* News timeline — client component, polls /api/news/[qid] every 60s */}
         <NewsSection wikidataQid={wikidataQid} />

@@ -659,6 +659,141 @@ export async function getMovers(
   }
 }
 
+// ─── Bio Facts (Wikidata) ─────────────────────────────────────────────────────
+
+export interface PersonBioFacts {
+  dateOfBirth: string | null;   // "1961-08-04"
+  age: number | null;
+  spouses: string[];
+  childCount: number;
+  teams: string[];              // sports clubs/teams
+  countrySport: string | null;  // country represented in sport
+  parties: string[];            // political parties
+  employers: string[];          // current/notable employers
+  ownerOf: string[];            // companies owned/founded
+  notableAward: string | null;  // one notable award
+  knownFor: string | null;      // notable work
+}
+
+const SEP = '~~~';
+const WIKIDATA_SPARQL = 'https://query.wikidata.org/sparql';
+const UA = process.env['WIKIMEDIA_USER_AGENT'] ?? 'PopularityIndex/0.1.0';
+const BIO_TTL_MS = 7 * 24 * 3_600_000; // 7 days
+
+async function fetchBioFromWikidata(qid: string): Promise<PersonBioFacts | null> {
+  const sparql = `
+SELECT
+  (SAMPLE(?dob) AS ?dateOfBirth)
+  (GROUP_CONCAT(DISTINCT ?spouseLabel; separator="${SEP}") AS ?spouses)
+  (COUNT(DISTINCT ?child) AS ?childCount)
+  (GROUP_CONCAT(DISTINCT ?teamLabel; separator="${SEP}") AS ?teams)
+  (SAMPLE(?cSportLabel) AS ?countrySport)
+  (GROUP_CONCAT(DISTINCT ?partyLabel; separator="${SEP}") AS ?parties)
+  (GROUP_CONCAT(DISTINCT ?employerLabel; separator="${SEP}") AS ?employers)
+  (GROUP_CONCAT(DISTINCT ?ownedLabel; separator="${SEP}") AS ?ownerOf)
+  (SAMPLE(?awardLabel) AS ?notableAward)
+  (SAMPLE(?knownForLabel) AS ?knownFor)
+WHERE {
+  OPTIONAL { wd:${qid} wdt:P569 ?dob }
+  OPTIONAL { wd:${qid} wdt:P26 ?spouse . ?spouse rdfs:label ?spouseLabel FILTER(LANG(?spouseLabel)="en") }
+  OPTIONAL { wd:${qid} wdt:P40 ?child }
+  OPTIONAL { wd:${qid} wdt:P54 ?team . ?team rdfs:label ?teamLabel FILTER(LANG(?teamLabel)="en") }
+  OPTIONAL { wd:${qid} wdt:P1532 ?cSport . ?cSport rdfs:label ?cSportLabel FILTER(LANG(?cSportLabel)="en") }
+  OPTIONAL { wd:${qid} wdt:P102 ?party . ?party rdfs:label ?partyLabel FILTER(LANG(?partyLabel)="en") }
+  OPTIONAL { wd:${qid} wdt:P108 ?employer . ?employer rdfs:label ?employerLabel FILTER(LANG(?employerLabel)="en") }
+  OPTIONAL { wd:${qid} wdt:P1830 ?owned . ?owned rdfs:label ?ownedLabel FILTER(LANG(?ownedLabel)="en") }
+  OPTIONAL { wd:${qid} wdt:P166 ?award . ?award rdfs:label ?awardLabel FILTER(LANG(?awardLabel)="en") }
+  OPTIONAL { wd:${qid} wdt:P800 ?knownFor . ?knownFor rdfs:label ?knownForLabel FILTER(LANG(?knownForLabel)="en") }
+}`;
+
+  try {
+    const res = await fetch(`${WIKIDATA_SPARQL}?query=${encodeURIComponent(sparql)}&format=json`, {
+      headers: { 'User-Agent': UA, Accept: 'application/sparql-results+json' },
+      signal: AbortSignal.timeout(12_000),
+      next: { revalidate: 86400 },
+    });
+    if (!res.ok) return null;
+    const json = await res.json() as {
+      results: { bindings: Array<Record<string, { value: string }>> }
+    };
+    const bindings = json.results.bindings;
+    const row = bindings[0];
+    if (!row) return null;
+
+    const dobRaw = row['dateOfBirth']?.value ?? null;
+    // Wikidata dates look like "+1961-08-04T00:00:00Z"
+    const dateOfBirth = dobRaw
+      ? dobRaw.replace(/^\+/, '').split('T')[0] ?? null
+      : null;
+
+    let age: number | null = null;
+    if (dateOfBirth) {
+      const dob = new Date(dateOfBirth);
+      const today = new Date();
+      age = today.getFullYear() - dob.getFullYear();
+      const m = today.getMonth() - dob.getMonth();
+      if (m < 0 || (m === 0 && today.getDate() < dob.getDate())) age--;
+    }
+
+    const r = row;
+    function splitVal(key: string): string[] {
+      const v = r[key]?.value ?? '';
+      return v ? v.split(SEP).map(s => s.trim()).filter(Boolean) : [];
+    }
+
+    return {
+      dateOfBirth,
+      age,
+      spouses: splitVal('spouses').slice(0, 3),
+      childCount: parseInt(row['childCount']?.value ?? '0', 10),
+      teams: splitVal('teams').slice(0, 3),
+      countrySport: row['countrySport']?.value ?? null,
+      parties: splitVal('parties').slice(0, 2),
+      employers: splitVal('employers').slice(0, 3),
+      ownerOf: splitVal('ownerOf').slice(0, 4),
+      notableAward: row['notableAward']?.value ?? null,
+      knownFor: row['knownFor']?.value ?? null,
+    };
+  } catch {
+    return null;
+  }
+}
+
+export async function getPersonBioFacts(qid: string): Promise<PersonBioFacts | null> {
+  try {
+    const conn = await db();
+    if (!conn) return null;
+
+    const cacheKey = `bio:${qid}`;
+
+    // Check DB cache
+    const cached = await conn
+      .select({ data: cacheEntries.data, updatedAt: cacheEntries.updatedAt })
+      .from(cacheEntries)
+      .where(eq(cacheEntries.key, cacheKey))
+      .limit(1);
+
+    if (cached[0]) {
+      const age = Date.now() - new Date(cached[0].updatedAt).getTime();
+      if (age < BIO_TTL_MS) return cached[0].data as PersonBioFacts;
+    }
+
+    // Fetch fresh from Wikidata
+    const facts = await fetchBioFromWikidata(qid);
+    if (!facts) return null;
+
+    // Store in cache
+    await conn
+      .insert(cacheEntries)
+      .values({ key: cacheKey, data: facts, updatedAt: new Date() })
+      .onConflictDoUpdate({ target: cacheEntries.key, set: { data: facts, updatedAt: new Date() } });
+
+    return facts;
+  } catch {
+    return null;
+  }
+}
+
 // ─── Compare two people ───────────────────────────────────────────────────────
 
 export async function getComparisonData(qidA: string, qidB: string) {
