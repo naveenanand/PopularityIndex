@@ -3,10 +3,6 @@ import type { Db } from '../client.js';
 import {
   pageviewObservations,
   sourceObservations,
-  sentimentObservations,
-  socialMetricObservations,
-  searchInterestObservations,
-  newsMentionClusters,
 } from '../schema/index.js';
 
 export function makeObservationsRepository(db: Db) {

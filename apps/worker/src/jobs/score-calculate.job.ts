@@ -1,6 +1,5 @@
 import {
   getDb,
-  makePeopleRepository,
   makeObservationsRepository,
   makeScoresRepository,
   makeJobsRepository,
@@ -29,7 +28,6 @@ const trending   = new WikipediaTrendingProvider();
 
 export async function runScoreCalculateJob(): Promise<void> {
   const db = await getDb();
-  const peopleRepo = makePeopleRepository(db);
   const obsRepo    = makeObservationsRepository(db);
   const scoresRepo = makeScoresRepository(db);
   const jobsRepo   = makeJobsRepository(db);

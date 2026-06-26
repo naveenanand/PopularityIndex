@@ -1,9 +1,11 @@
 export const revalidate = 60;
 
 import Link from 'next/link';
+import { Suspense } from 'react';
 import { getPersonWithScores, getLeaderboard } from '../../lib/api';
 import { formatScore, formatDate, coverageBadgeColor } from '../../lib/formatters';
 import { ComparePickList } from '../../components/compare/ComparePickList';
+import { BioFactsSection } from '../../components/person/BioFactsSection';
 import type { ScoreExplanation } from '@pai/shared';
 
 type SearchParams = Promise<{ a?: string; b?: string }>;
@@ -174,10 +176,10 @@ export default async function ComparePage({ searchParams }: PageProps) {
 
       {/* Side-by-side person cards */}
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-        {[
+        {([
           { data: dataA, accent: 'border-red-600/30', fallbackQid: a },
           { data: dataB, accent: 'border-blue-600/30', fallbackQid: b },
-        ].map(({ data, accent, fallbackQid }, idx) => (
+        ] as const).map(({ data, accent, fallbackQid }, idx) => (
           <div key={idx} className={`bg-zinc-900 border ${accent} rounded-2xl p-6 flex flex-col items-center gap-4`}>
             {data ? (
               <>
@@ -215,6 +217,10 @@ export default async function ComparePage({ searchParams }: PageProps) {
                     </div>
                   </div>
                 )}
+                {/* Bio facts — compact inline version */}
+                <Suspense fallback={null}>
+                  <BioFactsSection wikidataQid={data.person.wikidataQid} />
+                </Suspense>
               </>
             ) : (
               <p className="text-zinc-500 text-sm py-8">Not found: {fallbackQid}</p>
