@@ -96,7 +96,7 @@ export function NewsSection({ wikidataQid }: Props) {
       </ul>
 
       <p className="text-[10px] text-zinc-700 pt-1">
-        Source: GDELT Project · Refreshes every 60s
+        Source: Google News RSS · Refreshes every 60s
       </p>
     </div>
   );
