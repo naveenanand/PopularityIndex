@@ -4,6 +4,7 @@ import { getPersonWithScores } from '../../../lib/api';
 import { ScoreHistoryChart } from '../../../components/person/ScoreHistoryChart';
 import { DataSourceBadge } from '../../../components/shared/DataSourceBadge';
 import { NewsSection } from '../../../components/person/NewsSection';
+import { SummarySection } from '../../../components/person/SummarySection';
 import { formatDate, formatScore, coverageBadgeColor } from '../../../lib/formatters';
 import type { ScoreExplanation } from '@pai/shared';
 
@@ -113,7 +114,10 @@ export default async function PersonPage({ params }: PageProps) {
           </div>
         )}
 
-        {/* News — client component, polls /api/news/[qid] every 60s */}
+        {/* AI summary — fetches from /api/summary/[qid], cached 24h */}
+        <SummarySection wikidataQid={wikidataQid} displayName={person.displayName} />
+
+        {/* News timeline — client component, polls /api/news/[qid] every 60s */}
         <NewsSection wikidataQid={wikidataQid} />
 
         {/* Score history */}
@@ -160,10 +164,10 @@ export default async function PersonPage({ params }: PageProps) {
               { name: 'Wikidata sitelinks', type: 'live' as const },
               { name: 'Wikipedia metadata', type: 'live' as const },
               { name: 'Search interest (Wikipedia top articles)', type: 'live' as const },
-              { name: 'News coverage (GDELT)', type: 'live' as const },
-              { name: 'Sentiment (GDELT headlines)', type: 'live' as const },
-              { name: 'YouTube social reach', type: 'live' as const },
-              { name: 'Reddit conversation', type: 'partial' as const },
+              { name: 'News coverage (Google News RSS)', type: 'live' as const },
+              { name: 'Sentiment (headline analysis)', type: 'live' as const },
+              { name: 'Social reach (YouTube / Wikidata)', type: 'live' as const },
+              { name: 'Reddit conversation', type: 'live' as const },
             ].map(source => (
               <div key={source.name} className="flex items-center justify-between border-b border-zinc-800/60 pb-1.5">
                 <span className="text-zinc-400">{source.name}</span>
