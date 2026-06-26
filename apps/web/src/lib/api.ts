@@ -256,6 +256,7 @@ export async function searchPeople(query: string) {
         wikidataQid: people.wikidataQid,
         displayName: people.displayName,
         occupationSummary: people.occupationSummary,
+        photoUrl: people.photoUrl,
       },
     })
     .from(people)
