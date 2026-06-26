@@ -2,8 +2,8 @@ name: Update Trending Cache
 
 on:
   schedule:
-    # Every 4 hours — keeps trending tabs and person page news fresh
-    - cron: '0 */4 * * *'
+    # Every 15 minutes — heat scores and news update within 15min of breaking news
+    - cron: '*/15 * * * *'
   workflow_dispatch: {}
 
 jobs:

@@ -29,6 +29,7 @@ interface GDELTArticle {
 }
 
 interface ScoredPerson {
+  personId: number;
   wikidataQid: string;
   displayName: string;
   photoUrl: string | null;
@@ -36,6 +37,7 @@ interface ScoredPerson {
   popularityScore: number;
   heatScore: number;
   coverageScore: number;
+  confidenceScore: number;
   scoreModelVersion: string;
   calculatedAt: Date;
 }
@@ -106,6 +108,7 @@ const latestScores = db
 
 const scoredPeople: ScoredPerson[] = await db
   .select({
+    personId: people.id,
     wikidataQid: people.wikidataQid,
     displayName: people.displayName,
     photoUrl: people.photoUrl,
@@ -113,6 +116,7 @@ const scoredPeople: ScoredPerson[] = await db
     popularityScore: scoreSnapshots.popularityScore,
     heatScore: scoreSnapshots.heatScore,
     coverageScore: scoreSnapshots.coverageScore,
+    confidenceScore: scoreSnapshots.confidenceScore,
     scoreModelVersion: scoreSnapshots.scoreModelVersion,
     calculatedAt: scoreSnapshots.calculatedAt,
   })
@@ -137,6 +141,9 @@ console.log(`Found ${scoredPeople.length} scored people to check.`);
 
 // Per-person news map: accumulated across all timespans for person detail page display
 const personNewsMap = new Map<string, GDELTArticle[]>();
+
+// Capture 1h article counts for heat score recalculation
+let hourlyCountMap = new Map<string, GDELTArticle[]>();
 
 // Broad-discovery keywords — returns general news articles that might mention
 // newsworthy people who aren't yet scored in our DB.
@@ -222,6 +229,7 @@ for (const [timespan, gdeltMinutes] of Object.entries(GDELT_TIMESPANS)) {
       if (!countMap.has(qid)) {
         // Insert a synthetic unscored person entry (scores will be 0)
         scoredPeople.push({
+          personId: 0, // unscored — no score_snapshot to update
           wikidataQid: qid,
           displayName: String(row['display_name']),
           photoUrl: row['photo_url'] ? String(row['photo_url']) : null,
@@ -229,6 +237,7 @@ for (const [timespan, gdeltMinutes] of Object.entries(GDELT_TIMESPANS)) {
           popularityScore: 0,
           heatScore: 0,
           coverageScore: 0,
+          confidenceScore: 0,
           scoreModelVersion: 'v1',
           calculatedAt: new Date(),
         });
@@ -274,6 +283,8 @@ for (const [timespan, gdeltMinutes] of Object.entries(GDELT_TIMESPANS)) {
     });
 
   console.log(`[${timespan}] Stored ${trending.length} trending entries`);
+
+  if (timespan === '1h') hourlyCountMap = countMap;
 }
 
 // Store per-person news cache — used by person detail pages to show news without
@@ -293,10 +304,52 @@ await db
   });
 console.log(`[news_by_person] Stored news for ${Object.keys(newsByPerson).length} people`);
 
+// Heat score update — for people with 3+ articles in the last hour, write a new
+// score_snapshot with a news-boosted heatScore. This makes leaderboard rankings
+// shift in near-real-time when news breaks about someone.
+const heatUpdates: Array<{ name: string; oldHeat: number; newHeat: number }> = [];
+for (const person of scoredPeople) {
+  const articles = hourlyCountMap.get(person.wikidataQid);
+  if (!articles || articles.length < 3) continue;
+  // Log boost: 3 articles → +11pts, 10 → +24pts, 50 → +47pts (capped at 50pts boost)
+  const newsBoost = Math.min(50, Math.log1p(articles.length) * 12);
+  const newHeat = Math.min(100, person.heatScore + newsBoost);
+  if (newHeat - person.heatScore < 3) continue; // skip trivial changes
+  await db.insert(scoreSnapshots).values({
+    personId: person.personId,
+    calculatedAt: new Date(),
+    scoreModelVersion: `${person.scoreModelVersion}-news`,
+    popularityScore: person.popularityScore,
+    heatScore: newHeat,
+    coverageScore: person.coverageScore,
+    confidenceScore: person.confidenceScore,
+    sentimentScore: null,
+    controversyScore: null,
+    explanationJson: {
+      score_model_version: `${person.scoreModelVersion}-news`,
+      popularity_score: person.popularityScore,
+      heat_score: newHeat,
+      coverage_score: person.coverageScore,
+      news_articles_1h: articles.length,
+      heat_boost_from_news: newsBoost,
+      top_contributors: [
+        { signal: 'news_velocity_1h', impact: `+${newsBoost.toFixed(1)}`, reason: `${articles.length} articles in last hour` },
+      ],
+    },
+  });
+  heatUpdates.push({ name: person.displayName, oldHeat: person.heatScore, newHeat });
+}
+if (heatUpdates.length > 0) {
+  console.log(`\n[heat] Updated ${heatUpdates.length} people from news spikes:`);
+  for (const u of heatUpdates) {
+    console.log(`  ${u.name}: ${u.oldHeat.toFixed(1)} → ${u.newHeat.toFixed(1)}`);
+  }
+}
+
 // News feed: latest articles that mention any of our top scored people
 console.log('\n[news_feed] Fetching...');
 await delay(RATE_LIMIT_MS);
-const top8Names = scoredPeople.slice(0, 8).map(p => `"${p.displayName}"`).join(' OR ');
+const top8Names = `(${scoredPeople.slice(0, 8).map(p => `"${p.displayName}"`).join(' OR ')})`;
 const feedArticles = await fetchGDELTArticles(top8Names, '1440');
 
 const feed = feedArticles.slice(0, 20).map(a => {
