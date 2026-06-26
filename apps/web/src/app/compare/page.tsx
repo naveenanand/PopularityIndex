@@ -2,7 +2,7 @@ export const revalidate = 60;
 
 import Link from 'next/link';
 import { Suspense } from 'react';
-import { getPersonWithScores, getLeaderboard, getPersonBioFacts } from '../../lib/api';
+import { getPersonWithScores, getLeaderboard } from '../../lib/api';
 import { formatScore, formatDate, coverageBadgeColor } from '../../lib/formatters';
 import { ComparePickList } from '../../components/compare/ComparePickList';
 import { BioFactsSection } from '../../components/person/BioFactsSection';
