@@ -101,7 +101,7 @@ async function fetchCategoryPage(
     .filter(p => p.pageprops?.wikibase_item?.startsWith('Q'))
     .map(p => ({ title: p.title, qid: p.pageprops!.wikibase_item! }));
 
-  return { pages, next: data.continue };
+  return { pages, ...(data.continue !== undefined ? { next: data.continue } : {}) };
 }
 
 const db = await getDb();

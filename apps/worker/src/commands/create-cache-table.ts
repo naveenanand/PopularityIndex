@@ -19,5 +19,5 @@ await db.execute(sql`
 console.log('cache_entries table created (or already exists)');
 
 const rows = await db.execute(sql`SELECT COUNT(*) as n FROM cache_entries`);
-console.log('Rows in cache_entries:', rows.rows[0]);
+console.log('Rows in cache_entries:', rows[0]);
 process.exit(0);

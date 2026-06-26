@@ -2,6 +2,7 @@ export { WikidataProvider } from './wikidata/wikidata.provider.js';
 export { WikipediaPageviewsProvider } from './wikipedia/pageviews.provider.js';
 export { WikipediaMetadataProvider } from './wikipedia/metadata.provider.js';
 export { GDELTNewsProvider } from './news/gdelt.provider.js';
+export { GoogleNewsProvider } from './news/google-news.provider.js';
 export { RedditConversationProvider } from './social/reddit.provider.js';
 export { YouTubeSocialProvider } from './social/youtube.provider.js';
 export { WikipediaTrendingProvider } from './trends/wikipedia-trending.provider.js';
