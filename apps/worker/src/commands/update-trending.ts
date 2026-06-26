@@ -259,24 +259,40 @@ async function autoDiscoverPeople(
 }
 
 // --- trending:1h (current hour Wikipedia views) ---
+// Wikimedia's hourly endpoint lags ~1 hour: the current hour's data is often
+// unpublished. Try the current hour first, then fall back to the previous
+// completed hour. Only use heatScore as a last resort when both are empty.
 console.log('\n[1h] Fetching Wikipedia top articles for current hour...');
-const hourlyArticles = await fetchWikipediaTop(year, month, day, hour);
+let hourlyArticles = await fetchWikipediaTop(year, month, day, hour);
+
+if (hourlyArticles.length === 0) {
+  const prev = new Date(now);
+  prev.setUTCHours(prev.getUTCHours() - 1);
+  const prevYear  = prev.getUTCFullYear().toString();
+  const prevMonth = String(prev.getUTCMonth() + 1).padStart(2, '0');
+  const prevDay   = String(prev.getUTCDate()).padStart(2, '0');
+  const prevHour  = String(prev.getUTCHours()).padStart(2, '0');
+  console.log(`  Current hour empty — trying previous hour (${prevHour}:xx UTC)...`);
+  hourlyArticles = await fetchWikipediaTop(prevYear, prevMonth, prevDay, prevHour);
+}
 console.log(`  → ${hourlyArticles.length} Wikipedia articles`);
 
 const hourlyMatches = hourlyArticles
   .filter(a => isPersonArticle(a.article))
   .filter(a => titleToPerson.has(a.article));
 
+// Rank purely by Wikipedia views this hour — no popularity blending.
+// The 1h tab should show who people are actually reading RIGHT NOW.
 const trending1h = hourlyMatches
   .map(a => {
     const p = titleToPerson.get(a.article)!;
-    return makeTrendingEntry(p, 0, a.views * (1 + Math.log1p(p.popularityScore) / 20), a.views);
+    return makeTrendingEntry(p, 0, a.views, a.views);
   })
   .sort((a, b) => b.trendingScore - a.trendingScore)
   .slice(0, 50)
   .map((e, i) => ({ ...e, rank: i + 1 }));
 
-// Fall back to heatScore ranking if Wikipedia API returned nothing
+// Only fall back to heatScore if both the current and previous hour returned nothing
 const trending1hFinal = trending1h.length > 0
   ? trending1h
   : scoredPeople
