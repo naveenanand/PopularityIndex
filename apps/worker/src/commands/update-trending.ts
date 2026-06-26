@@ -185,7 +185,6 @@ const now = new Date();
 const year  = now.getUTCFullYear().toString();
 const month = String(now.getUTCMonth() + 1).padStart(2, '0');
 const day   = String(now.getUTCDate()).padStart(2, '0');
-const hour  = String(now.getUTCHours()).padStart(2, '0');
 
 const knownTitles = new Set(titleToPerson.keys());
 
