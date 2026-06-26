@@ -564,62 +564,98 @@ export async function getMovers(
   windowHours = 48,
   limit = 10,
 ): Promise<{ rising: MoverEntry[]; falling: MoverEntry[] }> {
-  const conn = await db();
-  if (!conn) return { rising: [], falling: [] };
+  try {
+    const conn = await db();
+    if (!conn) return { rising: [], falling: [] };
 
-  const cutoff = new Date(Date.now() - windowHours * 3_600_000);
-  const col = metric === 'heat' ? 'heat_score' : 'popularity_score';
+    const cutoff = new Date(Date.now() - windowHours * 3_600_000);
+    const scoreCol = metric === 'heat' ? scoreSnapshots.heatScore : scoreSnapshots.popularityScore;
 
-  // Raw SQL to avoid complex Drizzle join gymnastics:
-  // For each person get their latest score + their score at/after the window cutoff
-  const rows = await conn.execute(sql`
-    SELECT
-      p.wikidata_qid,
-      p.display_name,
-      p.occupation_summary,
-      p.photo_url,
-      cur.${sql.raw(col)}   AS current_score,
-      prev.${sql.raw(col)}  AS previous_score
-    FROM people p
-    JOIN score_snapshots cur  ON cur.person_id = p.id
-      AND cur.calculated_at = (
-        SELECT max(s2.calculated_at) FROM score_snapshots s2 WHERE s2.person_id = p.id
-      )
-    JOIN score_snapshots prev ON prev.person_id = p.id
-      AND prev.calculated_at = (
-        SELECT min(s3.calculated_at) FROM score_snapshots s3
-        WHERE s3.person_id = p.id AND s3.calculated_at >= ${cutoff}
-      )
-    WHERE cur.${sql.raw(col)} <> prev.${sql.raw(col)}
-  `);
+    // Latest snapshot per person
+    const latestSub = conn
+      .select({
+        personId: scoreSnapshots.personId,
+        maxAt: sql<string>`max(${scoreSnapshots.calculatedAt})`.as('max_at'),
+      })
+      .from(scoreSnapshots)
+      .groupBy(scoreSnapshots.personId)
+      .as('latest_sub');
 
-  const movers: MoverEntry[] = (rows as unknown as Array<{
-    wikidata_qid: string;
-    display_name: string;
-    occupation_summary: string | null;
-    photo_url: string | null;
-    current_score: number;
-    previous_score: number;
-  }>).map(r => {
-    const delta = r.current_score - r.previous_score;
+    // Earliest snapshot per person within the window
+    const earliestSub = conn
+      .select({
+        personId: scoreSnapshots.personId,
+        minAt: sql<string>`min(${scoreSnapshots.calculatedAt})`.as('min_at'),
+      })
+      .from(scoreSnapshots)
+      .where(sql`${scoreSnapshots.calculatedAt} >= ${cutoff}`)
+      .groupBy(scoreSnapshots.personId)
+      .as('earliest_sub');
+
+    // Two queries: latest scores and earliest-in-window scores, joined with people
+    const [latestRows, prevRows] = await Promise.all([
+      conn
+        .select({
+          personId: people.id,
+          wikidataQid: people.wikidataQid,
+          displayName: people.displayName,
+          occupationSummary: people.occupationSummary,
+          photoUrl: people.photoUrl,
+          score: scoreCol,
+        })
+        .from(people)
+        .innerJoin(latestSub, eq(latestSub.personId, people.id))
+        .innerJoin(
+          scoreSnapshots,
+          and(
+            eq(scoreSnapshots.personId, people.id),
+            eq(scoreSnapshots.calculatedAt, sql`${latestSub.maxAt}`),
+          ),
+        ),
+      conn
+        .select({
+          personId: scoreSnapshots.personId,
+          score: scoreCol,
+        })
+        .from(scoreSnapshots)
+        .innerJoin(
+          earliestSub,
+          and(
+            eq(earliestSub.personId, scoreSnapshots.personId),
+            eq(scoreSnapshots.calculatedAt, sql`${earliestSub.minAt}`),
+          ),
+        ),
+    ]);
+
+    const prevMap = new Map(prevRows.map(r => [r.personId, r.score]));
+
+    const movers: MoverEntry[] = latestRows
+      .map(r => {
+        const prev = prevMap.get(r.personId);
+        if (prev === undefined) return null;
+        const delta = r.score - prev;
+        if (Math.abs(delta) < 1) return null;
+        return {
+          wikidataQid: r.wikidataQid,
+          displayName: r.displayName,
+          occupationSummary: r.occupationSummary,
+          photoUrl: r.photoUrl ?? null,
+          currentScore: r.score,
+          previousScore: prev,
+          delta,
+          deltaPercent: prev > 0 ? (delta / prev) * 100 : 0,
+        } satisfies MoverEntry;
+      })
+      .filter((m): m is MoverEntry => m !== null)
+      .sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta));
+
     return {
-      wikidataQid: r.wikidata_qid,
-      displayName: r.display_name,
-      occupationSummary: r.occupation_summary,
-      photoUrl: r.photo_url,
-      currentScore: r.current_score,
-      previousScore: r.previous_score,
-      delta,
-      deltaPercent: r.previous_score > 0 ? (delta / r.previous_score) * 100 : 0,
+      rising: movers.filter(m => m.delta > 0).slice(0, limit),
+      falling: movers.filter(m => m.delta < 0).slice(0, limit),
     };
-  }).filter(m => Math.abs(m.delta) >= 1);
-
-  movers.sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta));
-
-  return {
-    rising: movers.filter(m => m.delta > 0).slice(0, limit),
-    falling: movers.filter(m => m.delta < 0).slice(0, limit),
-  };
+  } catch {
+    return { rising: [], falling: [] };
+  }
 }
 
 // ─── Compare two people ───────────────────────────────────────────────────────
