@@ -65,12 +65,59 @@ async function fetchWikipediaTop(
       signal: AbortSignal.timeout(12_000),
       cache: 'no-store',
     });
-    if (!res.ok) return [];
+    if (!res.ok) {
+      console.log(`[wiki] ${res.status} for ${path}`);
+      return [];
+    }
     const data = await res.json() as { items?: Array<{ articles: Array<{ article: string; views: number }> }> };
-    return data.items?.[0]?.articles ?? [];
-  } catch {
+    const articles = data.items?.[0]?.articles ?? [];
+    console.log(`[wiki] 200 for ${path} → ${articles.length} articles`);
+    return articles;
+  } catch (err) {
+    console.log(`[wiki] error for ${path}:`, err);
     return [];
   }
+}
+
+// Wikimedia hourly endpoint lags 1-3+ hours. Try going back up to maxBack hours.
+async function fetchWikipediaHourly(
+  now: Date, maxBack = 4,
+): Promise<Array<{ article: string; views: number }>> {
+  const pad = (n: number) => String(n).padStart(2, '0');
+  for (let back = 0; back <= maxBack; back++) {
+    const t = new Date(now);
+    t.setUTCHours(t.getUTCHours() - back);
+    const articles = await fetchWikipediaTop(
+      t.getUTCFullYear().toString(),
+      pad(t.getUTCMonth() + 1),
+      pad(t.getUTCDate()),
+      pad(t.getUTCHours()),
+    );
+    if (articles.length > 0) {
+      console.log(`[1h] Using -${back}h data (${pad(t.getUTCHours())}:xx UTC)`);
+      return articles;
+    }
+  }
+  return [];
+}
+
+/**
+ * Compute a live heat score from real-time activity data for the current cron period.
+ *
+ * This deliberately ignores the stored heatScore — we want a value that genuinely
+ * changes every run based on what just happened:
+ *
+ * 1h  (Wikipedia views): log10 scale anchored at 1M theoretical max.
+ *     1K views → ~50,  10K → ~67,  100K → ~83,  1M → 100
+ *
+ * 24h/30d (GDELT article count): log1p scale anchored at 100 articles.
+ *     1 article → 15,  5 → 37,  10 → 52,  30 → 74,  100 → 100
+ */
+function computeLiveHeat(timespan: string, metricValue: number): number {
+  if (timespan === '1h') {
+    return Math.min(100, (Math.log10(Math.max(1, metricValue)) / 6) * 100);
+  }
+  return Math.min(100, (Math.log1p(metricValue) / Math.log1p(100)) * 100);
 }
 
 const WIKI_SYSTEM_PREFIXES = ['Special:', 'Wikipedia:', 'Portal:', 'Help:', 'Template:', 'File:', 'Category:', 'Talk:'];
@@ -170,33 +217,18 @@ export async function GET(request: Request) {
   const results: Record<string, number> = {};
 
   // ── trending:1h — Wikipedia hourly page views ──────────────────────────────
-  // Wikimedia publishes hourly top-articles data with ~1h lag. Try the current
-  // hour, then fall back to the previous completed hour, then to heat score.
+  // Wikimedia publishes hourly top-articles data with 1-3+ hour lag.
+  // Try up to 4 hours back before falling through to heat score.
   const now = new Date();
-  const pad = (n: number) => String(n).padStart(2, '0');
-  const curYear  = now.getUTCFullYear().toString();
-  const curMonth = pad(now.getUTCMonth() + 1);
-  const curDay   = pad(now.getUTCDate());
-  const curHour  = pad(now.getUTCHours());
 
-  let wikiHourly = await fetchWikipediaTop(curYear, curMonth, curDay, curHour);
-  if (wikiHourly.length === 0) {
-    const prev = new Date(now);
-    prev.setUTCHours(prev.getUTCHours() - 1);
-    wikiHourly = await fetchWikipediaTop(
-      prev.getUTCFullYear().toString(),
-      pad(prev.getUTCMonth() + 1),
-      pad(prev.getUTCDate()),
-      pad(prev.getUTCHours()),
-    );
-  }
+  const wikiHourly = await fetchWikipediaHourly(now, 4);
 
   const hourlyMatches = wikiHourly
     .filter(a => isPersonArticle(a.article))
     .filter(a => titleToPerson.has(a.article));
 
   // Rank PURELY by Wikipedia page views — no popularity multiplier.
-  // The 1h tab shows who people are actually reading right now.
+  // liveHeat is derived from actual hourly views, changes every cron run.
   const trending1h = hourlyMatches
     .map(a => {
       const p = titleToPerson.get(a.article)!;
@@ -206,10 +238,13 @@ export async function GET(request: Request) {
         popularityScore: p.popularityScore, heatScore: p.heatScore,
         coverageScore: p.coverageScore, coverageLabel: 'Partial coverage',
         scoreModelVersion: p.scoreModelVersion, calculatedAt: p.calculatedAt,
-        articleCount: a.views, trendingScore: a.views, trendingArticles: [],
+        articleCount: a.views,
+        liveHeat: computeLiveHeat('1h', a.views),
+        trendingScore: a.views,
+        trendingArticles: [] as GDELTArticle[],
       };
     })
-    .sort((a, b) => b.trendingScore - a.trendingScore)
+    .sort((a, b) => b.liveHeat - a.liveHeat)
     .slice(0, 50)
     .map((e, i) => ({ ...e, rank: i + 1 }));
 
@@ -225,7 +260,8 @@ export async function GET(request: Request) {
           popularityScore: p.popularityScore, heatScore: p.heatScore,
           coverageScore: p.coverageScore, coverageLabel: 'Partial coverage',
           scoreModelVersion: p.scoreModelVersion, calculatedAt: p.calculatedAt,
-          articleCount: 0, trendingScore: p.heatScore, trendingArticles: [],
+          articleCount: 0, liveHeat: p.heatScore, trendingScore: p.heatScore,
+          trendingArticles: [] as GDELTArticle[],
         }));
 
   await conn
@@ -291,8 +327,9 @@ export async function GET(request: Request) {
       .filter(p => (countMap.get(p.wikidataQid)?.length ?? 0) >= 2)
       .map(p => {
         const articles = countMap.get(p.wikidataQid)!;
-        // Mild popularity tiebreak for 24h/30d: log(popularity)/20 max ~22% bonus.
-        // Raw article count still dominates — popularity only breaks ties.
+        // liveHeat derived from article count — changes every cron run.
+        // Mild popularity tiebreak (log/20) only used for secondary sort within ties.
+        const liveHeat = computeLiveHeat(timespan, articles.length);
         const scoreBoost = 1 + Math.log1p(p.popularityScore) / 20;
         return {
           rank:              0,
@@ -307,11 +344,12 @@ export async function GET(request: Request) {
           scoreModelVersion: p.scoreModelVersion,
           calculatedAt:      p.calculatedAt,
           articleCount:      articles.length,
+          liveHeat,
           trendingScore:     articles.length * scoreBoost,
           trendingArticles:  articles.slice(0, 5),
         };
       })
-      .sort((a, b) => b.trendingScore - a.trendingScore)
+      .sort((a, b) => b.liveHeat - a.liveHeat || b.trendingScore - a.trendingScore)
       .slice(0, 50)
       .map((e, i) => ({ ...e, rank: i + 1 }));
 

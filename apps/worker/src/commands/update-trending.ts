@@ -55,15 +55,58 @@ async function fetchWikipediaTop(year: string, month: string, day: string, hour?
       headers: { 'User-Agent': UA },
       signal: AbortSignal.timeout(15_000),
     });
-    if (!res.ok) return [];
+    if (!res.ok) {
+      console.log(`  Wikipedia API ${res.status} for ${path}`);
+      return [];
+    }
     const data = await res.json() as { items?: Array<{ articles: WikipediaTopArticle[] }> };
-    return data.items?.[0]?.articles ?? [];
-  } catch {
+    const articles = data.items?.[0]?.articles ?? [];
+    console.log(`  Wikipedia API 200 for ${path} → ${articles.length} articles`);
+    return articles;
+  } catch (err) {
+    console.log(`  Wikipedia API error for ${path}:`, err);
     return [];
   }
 }
 
-function makeTrendingEntry(p: ScoredPerson, i: number, trendingScore: number, articleCount: number) {
+// Try Wikipedia hourly data going back up to maxHoursBack hours.
+// Wikimedia's hourly endpoint can lag 2-3 hours, not just 1.
+async function fetchWikipediaHourly(now: Date, maxHoursBack = 4): Promise<WikipediaTopArticle[]> {
+  const pad = (n: number) => String(n).padStart(2, '0');
+  for (let back = 0; back <= maxHoursBack; back++) {
+    const t = new Date(now);
+    t.setUTCHours(t.getUTCHours() - back);
+    const articles = await fetchWikipediaTop(
+      t.getUTCFullYear().toString(),
+      pad(t.getUTCMonth() + 1),
+      pad(t.getUTCDate()),
+      pad(t.getUTCHours()),
+    );
+    if (articles.length > 0) {
+      console.log(`  Found data at -${back}h (${pad(t.getUTCHours())}:xx UTC)`);
+      return articles;
+    }
+  }
+  return [];
+}
+
+/**
+ * Compute live heat from real-time activity — mirrors the cron formula.
+ * 1h (Wikipedia views): log10 scale, 1K→50, 10K→67, 100K→83, 1M→100
+ * 24h/30d (Wikipedia views — larger absolute numbers than GDELT): same log10 scale
+ */
+function computeLiveHeat(timespan: string, metricValue: number): number {
+  if (timespan === '1h') {
+    return Math.min(100, (Math.log10(Math.max(1, metricValue)) / 6) * 100);
+  }
+  // 24h daily views are much larger — anchor at log10 of typical daily max (~5M)
+  return Math.min(100, (Math.log10(Math.max(1, metricValue)) / Math.log10(5_000_000)) * 100);
+}
+
+function makeTrendingEntry(
+  p: ScoredPerson, i: number, trendingScore: number, articleCount: number,
+  timespan: string,
+) {
   return {
     rank:              i + 1,
     wikidataQid:       p.wikidataQid,
@@ -77,6 +120,7 @@ function makeTrendingEntry(p: ScoredPerson, i: number, trendingScore: number, ar
     scoreModelVersion: p.scoreModelVersion,
     calculatedAt:      p.calculatedAt,
     articleCount,
+    liveHeat:          computeLiveHeat(timespan, articleCount),
     trendingScore,
     trendingArticles:  [],
   };
@@ -141,7 +185,6 @@ const now = new Date();
 const year  = now.getUTCFullYear().toString();
 const month = String(now.getUTCMonth() + 1).padStart(2, '0');
 const day   = String(now.getUTCDate()).padStart(2, '0');
-const hour  = String(now.getUTCHours()).padStart(2, '0');
 
 const knownTitles = new Set(titleToPerson.keys());
 
@@ -258,37 +301,24 @@ async function autoDiscoverPeople(
   return added;
 }
 
-// --- trending:1h (current hour Wikipedia views) ---
-// Wikimedia's hourly endpoint lags ~1 hour: the current hour's data is often
-// unpublished. Try the current hour first, then fall back to the previous
-// completed hour. Only use heatScore as a last resort when both are empty.
-console.log('\n[1h] Fetching Wikipedia top articles for current hour...');
-let hourlyArticles = await fetchWikipediaTop(year, month, day, hour);
-
-if (hourlyArticles.length === 0) {
-  const prev = new Date(now);
-  prev.setUTCHours(prev.getUTCHours() - 1);
-  const prevYear  = prev.getUTCFullYear().toString();
-  const prevMonth = String(prev.getUTCMonth() + 1).padStart(2, '0');
-  const prevDay   = String(prev.getUTCDate()).padStart(2, '0');
-  const prevHour  = String(prev.getUTCHours()).padStart(2, '0');
-  console.log(`  Current hour empty — trying previous hour (${prevHour}:xx UTC)...`);
-  hourlyArticles = await fetchWikipediaTop(prevYear, prevMonth, prevDay, prevHour);
-}
-console.log(`  → ${hourlyArticles.length} Wikipedia articles`);
+// --- trending:1h (Wikipedia hourly views) ---
+// Wikimedia's hourly endpoint lags 1-3 hours. Try going back up to 4 hours
+// before falling back to heatScore.
+console.log('\n[1h] Fetching Wikipedia top articles (trying up to 4 hours back)...');
+const hourlyArticles = await fetchWikipediaHourly(now, 4);
+console.log(`  → ${hourlyArticles.length} Wikipedia articles total`);
 
 const hourlyMatches = hourlyArticles
   .filter(a => isPersonArticle(a.article))
   .filter(a => titleToPerson.has(a.article));
 
-// Rank purely by Wikipedia views this hour — no popularity blending.
-// The 1h tab should show who people are actually reading RIGHT NOW.
+// Rank by liveHeat (derived from Wikipedia views) — changes every run.
 const trending1h = hourlyMatches
   .map(a => {
     const p = titleToPerson.get(a.article)!;
-    return makeTrendingEntry(p, 0, a.views, a.views);
+    return makeTrendingEntry(p, 0, a.views, a.views, '1h');
   })
-  .sort((a, b) => b.trendingScore - a.trendingScore)
+  .sort((a, b) => b.liveHeat - a.liveHeat)
   .slice(0, 50)
   .map((e, i) => ({ ...e, rank: i + 1 }));
 
@@ -299,7 +329,7 @@ const trending1hFinal = trending1h.length > 0
       .filter(p => p.heatScore > 0)
       .sort((a, b) => b.heatScore - a.heatScore)
       .slice(0, 50)
-      .map((p, i) => makeTrendingEntry(p, i, p.heatScore, 0));
+      .map((p, i) => makeTrendingEntry(p, i, p.heatScore, 0, '1h'));
 
 await db
   .insert(cacheEntries)
@@ -335,9 +365,9 @@ const dailyMatches = dailyArticles
 const trending24h = dailyMatches
   .map(a => {
     const p = titleToPerson.get(a.article)!;
-    return makeTrendingEntry(p, 0, a.views * (1 + Math.log1p(p.popularityScore) / 20), a.views);
+    return makeTrendingEntry(p, 0, a.views, a.views, '24h');
   })
-  .sort((a, b) => b.trendingScore - a.trendingScore)
+  .sort((a, b) => b.liveHeat - a.liveHeat)
   .slice(0, 50)
   .map((e, i) => ({ ...e, rank: i + 1 }));
 
@@ -347,7 +377,7 @@ const trending24hFinal = trending24h.length > 0
       .filter(p => p.heatScore > 0)
       .sort((a, b) => b.heatScore - a.heatScore)
       .slice(0, 50)
-      .map((p, i) => makeTrendingEntry(p, i, p.heatScore, 0));
+      .map((p, i) => makeTrendingEntry(p, i, p.heatScore, 0, '24h'));
 
 await db
   .insert(cacheEntries)
@@ -366,7 +396,7 @@ const trending30d = scoredPeople
   .filter(p => p.heatScore > 0)
   .sort((a, b) => b.heatScore - a.heatScore)
   .slice(0, 50)
-  .map((p, i) => makeTrendingEntry(p, i, p.heatScore, 0));
+  .map((p, i) => makeTrendingEntry(p, i, p.heatScore, 0, '30d'));
 
 await db
   .insert(cacheEntries)

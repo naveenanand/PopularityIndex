@@ -61,7 +61,7 @@ export function TrendingTable({ entries, timespan }: Props) {
             <th className="pb-3 pl-5 pr-4 w-10">#</th>
             <th className="pb-3 pr-4 py-4">Name</th>
             <th className="pb-3 pr-4 text-right">{ACTIVITY_LABEL[timespan] ?? 'Activity'}</th>
-            <th className="pb-3 pr-5 text-right">Popularity</th>
+            <th className="pb-3 pr-5 text-right">Live Heat</th>
           </tr>
         </thead>
         <tbody className="divide-y divide-zinc-800/60">
@@ -97,7 +97,13 @@ export function TrendingTable({ entries, timespan }: Props) {
                 </span>
               </td>
               <td className="py-3 pr-5 text-right">
-                <span className="text-sm font-semibold text-amber-400">{Math.round(entry.popularityScore)}</span>
+                <span className={`text-sm font-bold ${
+                  entry.liveHeat >= 70 ? 'text-red-400' :
+                  entry.liveHeat >= 40 ? 'text-orange-400' :
+                  'text-amber-400'
+                }`}>
+                  {Math.round(entry.liveHeat)}
+                </span>
               </td>
             </tr>
           ))}

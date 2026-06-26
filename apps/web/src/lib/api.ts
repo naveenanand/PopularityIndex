@@ -74,6 +74,10 @@ export interface NewsArticle {
 
 export interface TrendingEntry extends LeaderboardEntry {
   articleCount: number;
+  // Heat computed fresh from this period's data — changes every cron run.
+  // 1h: derived from Wikipedia hourly page views.
+  // 24h/30d: derived from GDELT article count.
+  liveHeat: number;
 }
 
 export interface ViewPerson {
