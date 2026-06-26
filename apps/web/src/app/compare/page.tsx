@@ -107,10 +107,16 @@ export default async function ComparePage({ searchParams }: PageProps) {
   }
 
   // ── Full comparison: both a and b are set ───────────────────────────────────
-  const [dataA, dataB] = await Promise.all([
-    a ? getPersonWithScores(a) : Promise.resolve(null),
-    b ? getPersonWithScores(b) : Promise.resolve(null),
-  ]);
+  let dataA: Awaited<ReturnType<typeof getPersonWithScores>> = null;
+  let dataB: Awaited<ReturnType<typeof getPersonWithScores>> = null;
+  try {
+    [dataA, dataB] = await Promise.all([
+      a ? getPersonWithScores(a) : Promise.resolve(null),
+      b ? getPersonWithScores(b) : Promise.resolve(null),
+    ]);
+  } catch (err) {
+    console.error('[compare] data fetch error:', err);
+  }
 
   const explanationA = dataA?.latestScore?.explanationJson as ScoreExplanation | undefined;
   const explanationB = dataB?.latestScore?.explanationJson as ScoreExplanation | undefined;
@@ -295,9 +301,9 @@ export default async function ComparePage({ searchParams }: PageProps) {
                 <div className="space-y-2">
                   {exp.top_contributors.slice(0, 5).map((c, i) => (
                     <div key={i} className="flex items-center justify-between text-xs border-b border-zinc-800/60 pb-1.5 last:border-0">
-                      <span className="text-zinc-400 capitalize">{c.signal.replace(/_/g, ' ')}</span>
-                      <span className={`font-mono ${parseFloat(c.impact) >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
-                        {c.impact}
+                      <span className="text-zinc-400 capitalize">{(c.signal ?? '').replace(/_/g, ' ')}</span>
+                      <span className={`font-mono ${parseFloat(c.impact ?? '0') >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                        {c.impact ?? ''}
                       </span>
                     </div>
                   ))}

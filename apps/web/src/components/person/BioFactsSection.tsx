@@ -101,35 +101,60 @@ function BioFactsContent({ facts }: { facts: PersonBioFacts }) {
 }
 
 export async function BioFactsSection({ wikidataQid }: Props) {
-  const facts = await getPersonBioFacts(wikidataQid);
-  if (!facts) return null;
+  try {
+    const raw = await getPersonBioFacts(wikidataQid);
+    if (!raw) return null;
 
-  // Check if there's actually anything to show
-  const hasData = facts.dateOfBirth ||
-    facts.spouses.length > 0 ||
-    facts.childCount > 0 ||
-    facts.teams.length > 0 ||
-    facts.countrySport ||
-    facts.parties.length > 0 ||
-    facts.employers.length > 0 ||
-    facts.companies.length > 0 ||
-    facts.knownFor ||
-    facts.notableAward;
+    // Normalise: old cache entries may use 'ownerOf' instead of 'companies'
+    const r = raw as unknown as Record<string, unknown>;
+    const facts: PersonBioFacts = {
+      ...raw,
+      spouses: (raw.spouses as string[] | undefined) ?? [],
+      teams: (raw.teams as string[] | undefined) ?? [],
+      parties: (raw.parties as string[] | undefined) ?? [],
+      employers: (raw.employers as string[] | undefined) ?? [],
+      companies: (raw.companies as string[] | undefined) ?? (r['ownerOf'] as string[] | undefined) ?? [],
+    };
 
-  if (!hasData) return null;
+    const hasData = facts.dateOfBirth ||
+      facts.spouses.length > 0 ||
+      facts.childCount > 0 ||
+      facts.teams.length > 0 ||
+      facts.countrySport ||
+      facts.parties.length > 0 ||
+      facts.employers.length > 0 ||
+      facts.companies.length > 0 ||
+      facts.knownFor ||
+      facts.notableAward;
 
-  return (
-    <div className="bg-zinc-900 rounded-2xl border border-zinc-800 p-5">
-      <h2 className="font-bold text-white text-sm mb-1">About</h2>
-      <BioFactsContent facts={facts} />
-    </div>
-  );
+    if (!hasData) return null;
+
+    return (
+      <div className="bg-zinc-900 rounded-2xl border border-zinc-800 p-5">
+        <h2 className="font-bold text-white text-sm mb-1">About</h2>
+        <BioFactsContent facts={facts} />
+      </div>
+    );
+  } catch (err) {
+    console.error('[BioFactsSection] render error for', wikidataQid, err);
+    return null;
+  }
 }
 
 // Compact version for compare page (no card wrapper)
 export async function BioFactsCompact({ wikidataQid }: Props) {
-  const facts = await getPersonBioFacts(wikidataQid);
-  if (!facts) return null;
+  const raw = await getPersonBioFacts(wikidataQid);
+  if (!raw) return null;
+
+  const r = raw as unknown as Record<string, unknown>;
+  const facts: PersonBioFacts = {
+    ...raw,
+    spouses: (raw.spouses as string[] | undefined) ?? [],
+    teams: (raw.teams as string[] | undefined) ?? [],
+    parties: (raw.parties as string[] | undefined) ?? [],
+    employers: (raw.employers as string[] | undefined) ?? [],
+    companies: (raw.companies as string[] | undefined) ?? (r['ownerOf'] as string[] | undefined) ?? [],
+  };
 
   const items: string[] = [];
   if (facts.dateOfBirth && facts.age !== null) items.push(`Age ${facts.age}`);
