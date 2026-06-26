@@ -46,8 +46,9 @@ const GDELT_TIMESPANS: Record<string, string> = {
   '30d': '20160',
 };
 
-// 6s gap between GDELT calls — safely above the 1 req/5s limit.
-const RATE_LIMIT_MS = 6_000;
+// 90s gap between GDELT calls. Empirically needed — GDELT blocks GitHub Actions
+// IPs after 2 rapid calls. 3 calls × 90s = ~4.5 min of delays per run.
+const RATE_LIMIT_MS = 90_000;
 
 // Single broad query that catches political, cultural, sports, and business news.
 // Returns 250 articles per call; we JS-match titles against scored people names.
@@ -140,6 +141,7 @@ console.log(`Found ${scoredPeople.length} scored people to match against.`);
 // Per-person news map: accumulated across all timespans
 const personNewsMap = new Map<string, GDELTArticle[]>();
 let hourlyCountMap = new Map<string, GDELTArticle[]>();
+let allArticles24h: GDELTArticle[] = [];
 
 for (const [timespan, gdeltMinutes] of Object.entries(GDELT_TIMESPANS)) {
   console.log(`\n[${timespan}] Fetching discovery articles (1 GDELT call)...`);
@@ -209,6 +211,7 @@ for (const [timespan, gdeltMinutes] of Object.entries(GDELT_TIMESPANS)) {
   console.log(`[${timespan}] ${matched} people matched → stored ${trending.length} trending entries`);
 
   if (timespan === '1h') hourlyCountMap = countMap;
+  if (timespan === '24h') allArticles24h = unique;
 
   await delay(RATE_LIMIT_MS);
 }
@@ -272,10 +275,13 @@ if (heatUpdates.length > 0) {
   }
 }
 
-// News feed — top articles mentioning our most popular people (1 more GDELT call)
-console.log('\n[news_feed] Fetching...');
-const top8Names = `(${scoredPeople.slice(0, 8).map(p => `"${p.displayName}"`).join(' OR ')})`;
-const feedArticles = await fetchGDELTArticles(top8Names, '1440');
+// News feed — built from the 24h discovery articles (no extra GDELT call needed)
+console.log('\n[news_feed] Building from 24h articles...');
+const feedArticles = allArticles24h
+  .filter(a => {
+    const t = a.title.toLowerCase();
+    return scoredPeople.some(p => t.includes(p.displayName.toLowerCase()));
+  });
 
 const feed = feedArticles.slice(0, 20).map(a => {
   const titleLower = a.title.toLowerCase();
@@ -299,4 +305,4 @@ await db
   });
 
 console.log(`[news_feed] Stored ${feed.length} articles`);
-console.log('\nTrending update complete! (4 GDELT calls total)');
+console.log('\nTrending update complete! (3 GDELT calls total)');
