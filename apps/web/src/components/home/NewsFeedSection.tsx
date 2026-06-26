@@ -35,7 +35,7 @@ export function NewsFeedSection({ articles }: Props) {
         <h2 className="text-lg font-bold text-white">
           <span className="mr-2">📰</span>Latest News
         </h2>
-        <span className="text-xs text-zinc-600">Via GDELT · last 24h</span>
+        <span className="text-xs text-zinc-600">Via Wikipedia · trending today</span>
       </div>
 
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">

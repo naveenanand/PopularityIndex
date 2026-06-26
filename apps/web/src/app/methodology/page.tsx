@@ -60,12 +60,12 @@ export default function MethodologyPage() {
             </thead>
             <tbody className="divide-y divide-zinc-800/60">
               {[
-                { component: 'Search interest', weight: '15%', source: 'Google Trends proxy', status: 'Mock', color: 'text-amber-400' },
-                { component: 'Wikipedia attention', weight: '15%', source: 'Wikimedia Pageviews API', status: 'Live', color: 'text-emerald-400' },
-                { component: 'News / media coverage', weight: '25%', source: 'News API proxy', status: 'Mock', color: 'text-amber-400' },
-                { component: 'Social reach', weight: '15%', source: 'Social data proxy', status: 'Mock', color: 'text-amber-400' },
-                { component: 'Conversation volume', weight: '15%', source: 'Conversation proxy', status: 'Mock', color: 'text-amber-400' },
-                { component: 'Enduring prominence', weight: '15%', source: 'Wikidata (sitelinks)', status: 'Live', color: 'text-emerald-400' },
+                { component: 'Search interest',    weight: '15%', source: 'Wikipedia Trending API',        status: 'Live', color: 'text-emerald-400' },
+                { component: 'Wikipedia attention', weight: '15%', source: 'Wikimedia Pageviews API',       status: 'Live', color: 'text-emerald-400' },
+                { component: 'News / media coverage', weight: '25%', source: 'Google News RSS',             status: 'Live', color: 'text-emerald-400' },
+                { component: 'Social reach',        weight: '15%', source: 'YouTube API · Wikidata P8687', status: 'Live', color: 'text-emerald-400' },
+                { component: 'Conversation volume', weight: '15%', source: 'Reddit public search',          status: 'Live', color: 'text-emerald-400' },
+                { component: 'Enduring prominence', weight: '15%', source: 'Wikidata (sitelinks)',          status: 'Live', color: 'text-emerald-400' },
               ].map((row) => (
                 <tr key={row.component} className="hover:bg-zinc-800/50 transition-colors">
                   <td className="p-3 font-medium text-zinc-200">{row.component}</td>
