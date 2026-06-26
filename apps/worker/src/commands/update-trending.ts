@@ -1,14 +1,16 @@
 /**
- * Trending update — two-phase approach:
+ * Trending update — Wikipedia pageviews approach (no GDELT).
  *
- * Phase 1 (scored people): Batch scored people names into OR queries → GDELT
- *   returns articles mentioning any of them → count per person in JS.
- *   This reliably covers all ~350+ scored people with only 13-ish GDELT calls.
+ * GDELT blocks GitHub Actions and Vercel IPs after 2+ requests.
+ * Instead, we use Wikipedia's "top articles" endpoint (same Wikimedia
+ * infrastructure we already call for scoring) which has no such limits.
  *
- * Phase 2 (discovery): Broad keyword query → match article titles against
- *   ALL 100k people in DB via PostgreSQL → catches unscored but newsworthy people.
+ * Strategy:
+ *   trending:1h  → top Wikipedia articles for the current hour
+ *   trending:24h → top Wikipedia articles for today
+ *   trending:30d → scored people ranked by their stored heatScore
  *
- * Combined result: truly trending people, not just top-50-by-score.
+ * If Wikipedia API is unavailable, all tabs fall back to heatScore ranking.
  */
 
 import { findUp } from 'find-up';
@@ -20,13 +22,6 @@ const envPath = await findUp('.env');
 if (envPath) config({ path: envPath });
 
 const UA = process.env['WIKIMEDIA_USER_AGENT'] ?? 'PopularityIndex/0.1.0';
-
-interface GDELTArticle {
-  title: string;
-  url: string;
-  domain: string;
-  seendate: string;
-}
 
 interface ScoredPerson {
   personId: number;
@@ -42,61 +37,57 @@ interface ScoredPerson {
   calculatedAt: Date;
 }
 
-// GDELT artlist timespan in minutes (artlist only accepts integers, not named units)
-const GDELT_TIMESPANS: Record<string, string> = {
-  '1h':  '60',
-  '24h': '1440',
-  '30d': '20160', // 14 days — 30d (43200) hits complexity limits with long OR chains
-};
+interface WikipediaTopArticle {
+  article: string; // title with underscores
+  views: number;
+  rank: number;
+}
 
-// 15 names per batch ≈ 400 chars with quotes/OR — under GDELT's ~500-char limit.
-// GitHub Actions IPs are clean so 3s between calls is enough.
-const BATCH_SIZE = 15;
-const RATE_LIMIT_MS = 3_000;
-
-async function fetchGDELTArticles(query: string, gdeltMinutes: string): Promise<GDELTArticle[]> {
-  const params = new URLSearchParams({
-    query,
-    mode: 'artlist',
-    maxrecords: '250',
-    format: 'json',
-    timespan: gdeltMinutes,
-    sort: 'DateDesc',
-  });
+// Fetch Wikipedia top articles for a given date/hour
+// Date format: YYYY/MM/DD, hour format: HH (00-23)
+async function fetchWikipediaTop(year: string, month: string, day: string, hour?: string): Promise<WikipediaTopArticle[]> {
+  const path = hour
+    ? `metrics/pageviews/top/en.wikipedia.org/all-access/${year}/${month}/${day}/${hour}`
+    : `metrics/pageviews/top/en.wikipedia.org/all-access/${year}/${month}/${day}`;
+  const url = `https://wikimedia.org/api/rest_v1/${path}`;
   try {
-    const res = await fetch(`https://api.gdeltproject.org/api/v2/doc/doc?${params}`, {
+    const res = await fetch(url, {
       headers: { 'User-Agent': UA },
-      signal: AbortSignal.timeout(20_000),
+      signal: AbortSignal.timeout(15_000),
     });
-    if (!res.ok) {
-      process.stderr.write(`  GDELT HTTP ${res.status} for timespan=${gdeltMinutes}\n`);
-      return [];
-    }
-    const text = await res.text();
-    // GDELT sometimes returns a rate-limit plain-text message instead of JSON
-    if (!text.startsWith('{') && !text.startsWith('[')) {
-      process.stderr.write(`  GDELT rate-limited: ${text.slice(0, 80)}\n`);
-      return [];
-    }
-    const data = JSON.parse(text) as { articles?: GDELTArticle[] };
-    return data.articles ?? [];
-  } catch (err) {
-    process.stderr.write(`  GDELT fetch error: ${err}\n`);
+    if (!res.ok) return [];
+    const data = await res.json() as { items?: Array<{ articles: WikipediaTopArticle[] }> };
+    return data.items?.[0]?.articles ?? [];
+  } catch {
     return [];
   }
+}
+
+function makeTrendingEntry(p: ScoredPerson, i: number, trendingScore: number, articleCount: number) {
+  return {
+    rank:              i + 1,
+    wikidataQid:       p.wikidataQid,
+    displayName:       p.displayName,
+    photoUrl:          p.photoUrl,
+    occupationSummary: p.occupationSummary,
+    popularityScore:   p.popularityScore,
+    heatScore:         p.heatScore,
+    coverageScore:     p.coverageScore,
+    coverageLabel:     'Partial coverage',
+    scoreModelVersion: p.scoreModelVersion,
+    calculatedAt:      p.calculatedAt,
+    articleCount,
+    trendingScore,
+    trendingArticles:  [],
+  };
 }
 
 function delay(ms: number) {
   return new Promise<void>(r => setTimeout(r, ms));
 }
 
-function dedupe(articles: GDELTArticle[]): GDELTArticle[] {
-  return [...new Map(articles.map(a => [a.url, a])).values()];
-}
-
 const db = await getDb();
 
-// Get all scored people (not just top 50 by popularity)
 const latestScores = db
   .select({
     personId: scoreSnapshots.personId,
@@ -137,188 +128,171 @@ if (scoredPeople.length === 0) {
   process.exit(0);
 }
 
-console.log(`Found ${scoredPeople.length} scored people to check.`);
+console.log(`Found ${scoredPeople.length} scored people.`);
 
-// Per-person news map: accumulated across all timespans for person detail page display
-const personNewsMap = new Map<string, GDELTArticle[]>();
-
-// Capture 1h article counts for heat score recalculation
-let hourlyCountMap = new Map<string, GDELTArticle[]>();
-
-// Broad-discovery keywords — returns general news articles that might mention
-// newsworthy people who aren't yet scored in our DB.
-const DISCOVERY_QUERY =
-  '(president OR minister OR senator OR CEO OR actor OR singer OR athlete OR champion OR arrested OR elected OR appointed)';
-
-for (const [timespan, gdeltMinutes] of Object.entries(GDELT_TIMESPANS)) {
-  console.log(`\n[${timespan}] Fetching articles...`);
-  const allArticles: GDELTArticle[] = [];
-  let callCount = 0;
-
-  // Phase 1: batch queries for scored people names
-  const batches: ScoredPerson[][] = [];
-  for (let i = 0; i < scoredPeople.length; i += BATCH_SIZE) {
-    batches.push(scoredPeople.slice(i, i + BATCH_SIZE));
-  }
-
-  for (let bi = 0; bi < batches.length; bi++) {
-    const batch = batches[bi]!;
-    const orQuery = `(${batch.map(p => `"${p.displayName}"`).join(' OR ')})`;
-    const articles = await fetchGDELTArticles(orQuery, gdeltMinutes);
-    allArticles.push(...articles);
-    callCount++;
-    process.stdout.write(`  batch ${bi + 1}/${batches.length}: ${articles.length} articles\r`);
-    if (bi + 1 < batches.length) await delay(RATE_LIMIT_MS);
-  }
-
-  // Phase 2: discovery query for unscored but newsworthy people
-  await delay(RATE_LIMIT_MS);
-  const discoveryArticles = await fetchGDELTArticles(DISCOVERY_QUERY, gdeltMinutes);
-  allArticles.push(...discoveryArticles);
-  callCount++;
-
-  const unique = dedupe(allArticles);
-  console.log(`  ${callCount} GDELT calls → ${unique.length} unique articles`);
-
-  // Count per scored person (JS string match on title)
-  const countMap = new Map<string, GDELTArticle[]>();
-  for (const article of unique) {
-    const titleLower = article.title.toLowerCase();
-    for (const person of scoredPeople) {
-      if (titleLower.includes(person.displayName.toLowerCase())) {
-        const qid = person.wikidataQid;
-        if (!countMap.has(qid)) countMap.set(qid, []);
-        countMap.get(qid)!.push(article);
-      }
-    }
-  }
-
-  // Accumulate into global per-person news map (dedup by URL)
-  for (const [qid, articles] of countMap) {
-    const existing = personNewsMap.get(qid) ?? [];
-    const existingUrls = new Set(existing.map(a => a.url));
-    for (const article of articles) {
-      if (!existingUrls.has(article.url)) {
-        existing.push(article);
-        existingUrls.add(article.url);
-      }
-    }
-    personNewsMap.set(qid, existing);
-  }
-
-  // Phase 2 discovery: match discovery articles against ALL 100k people in DB
-  if (discoveryArticles.length > 0) {
-    const corpus = discoveryArticles.map(a => a.title).join(' § ');
-    const dbMatches = await db.execute(sql`
-      SELECT p.wikidata_qid, p.display_name, p.photo_url, p.occupation_summary
-      FROM people p
-      WHERE
-        length(p.display_name) >= 8
-        AND position(lower(p.display_name) IN lower(${corpus})) > 0
-        AND NOT EXISTS (
-          SELECT 1 FROM score_snapshots ss WHERE ss.person_id = p.id
-        )
-      LIMIT 100
-    `);
-
-    for (const row of dbMatches as unknown as Record<string, unknown>[]) {
-      const name = String(row['display_name']).toLowerCase();
-      const matched = discoveryArticles.filter(a => a.title.toLowerCase().includes(name));
-      if (matched.length === 0) continue;
-      const qid = String(row['wikidata_qid']);
-      if (!countMap.has(qid)) {
-        // Insert a synthetic unscored person entry (scores will be 0)
-        scoredPeople.push({
-          personId: 0, // unscored — no score_snapshot to update
-          wikidataQid: qid,
-          displayName: String(row['display_name']),
-          photoUrl: row['photo_url'] ? String(row['photo_url']) : null,
-          occupationSummary: row['occupation_summary'] ? String(row['occupation_summary']) : null,
-          popularityScore: 0,
-          heatScore: 0,
-          coverageScore: 0,
-          confidenceScore: 0,
-          scoreModelVersion: 'v1',
-          calculatedAt: new Date(),
-        });
-        countMap.set(qid, matched);
-      }
-    }
-  }
-
-  const trending = scoredPeople
-    .filter(p => (countMap.get(p.wikidataQid)?.length ?? 0) >= 2)
-    .map(p => {
-      const articles = countMap.get(p.wikidataQid)!;
-      // Hybrid rank: article count × (1 + log of popularity) keeps high-profile
-      // people ranked above newly-newsworthy zero-scored people with equal articles
-      const scoreBoost = 1 + Math.log1p(p.popularityScore) / 10;
-      return {
-        rank:              0,
-        wikidataQid:       p.wikidataQid,
-        displayName:       p.displayName,
-        photoUrl:          p.photoUrl,
-        occupationSummary: p.occupationSummary,
-        popularityScore:   p.popularityScore,
-        heatScore:         p.heatScore,
-        coverageScore:     p.coverageScore,
-        coverageLabel:     'Partial coverage',
-        scoreModelVersion: p.scoreModelVersion,
-        calculatedAt:      p.calculatedAt,
-        articleCount:      articles.length,
-        trendingScore:     articles.length * scoreBoost,
-        trendingArticles:  articles.slice(0, 5),
-      };
-    })
-    .sort((a, b) => b.trendingScore - a.trendingScore)
-    .slice(0, 50)
-    .map((e, i) => ({ ...e, rank: i + 1 }));
-
-  await db
-    .insert(cacheEntries)
-    .values({ key: `trending:${timespan}`, data: trending, updatedAt: new Date() })
-    .onConflictDoUpdate({
-      target: cacheEntries.key,
-      set: { data: trending, updatedAt: new Date() },
-    });
-
-  console.log(`[${timespan}] Stored ${trending.length} trending entries`);
-
-  if (timespan === '1h') hourlyCountMap = countMap;
+// Build a lookup: wikipedia_title → ScoredPerson
+// Wikipedia titles use underscores; we normalize display names to match.
+const titleToPerson = new Map<string, ScoredPerson>();
+for (const p of scoredPeople) {
+  titleToPerson.set(p.displayName.replace(/ /g, '_'), p);
 }
 
-// Store per-person news cache — used by person detail pages to show news without
-// calling GDELT live on every visit. Covers all scored people with article matches.
-const newsByPerson: Record<string, GDELTArticle[]> = {};
-for (const [qid, articles] of personNewsMap) {
-  newsByPerson[qid] = articles
-    .sort((a, b) => b.seendate.localeCompare(a.seendate))
-    .slice(0, 5);
+const now = new Date();
+const year  = now.getUTCFullYear().toString();
+const month = String(now.getUTCMonth() + 1).padStart(2, '0');
+const day   = String(now.getUTCDate()).padStart(2, '0');
+const hour  = String(now.getUTCHours()).padStart(2, '0');
+
+// Filter out non-person Wikipedia system pages
+const SYSTEM_PREFIXES = ['Special:', 'Wikipedia:', 'Portal:', 'Help:', 'Template:', 'File:', 'Category:', 'Talk:'];
+function isPersonArticle(title: string): boolean {
+  return !SYSTEM_PREFIXES.some(p => title.startsWith(p))
+    && title !== 'Main_Page'
+    && !title.includes('_(disambiguation)');
 }
+
+// --- trending:1h (current hour Wikipedia views) ---
+console.log('\n[1h] Fetching Wikipedia top articles for current hour...');
+const hourlyArticles = await fetchWikipediaTop(year, month, day, hour);
+console.log(`  → ${hourlyArticles.length} Wikipedia articles`);
+
+const hourlyMatches = hourlyArticles
+  .filter(a => isPersonArticle(a.article))
+  .filter(a => titleToPerson.has(a.article));
+
+const trending1h = hourlyMatches
+  .map(a => {
+    const p = titleToPerson.get(a.article)!;
+    return makeTrendingEntry(p, 0, a.views * (1 + Math.log1p(p.popularityScore) / 20), a.views);
+  })
+  .sort((a, b) => b.trendingScore - a.trendingScore)
+  .slice(0, 50)
+  .map((e, i) => ({ ...e, rank: i + 1 }));
+
+// Fall back to heatScore ranking if Wikipedia API returned nothing
+const trending1hFinal = trending1h.length > 0
+  ? trending1h
+  : scoredPeople
+      .filter(p => p.heatScore > 0)
+      .sort((a, b) => b.heatScore - a.heatScore)
+      .slice(0, 50)
+      .map((p, i) => makeTrendingEntry(p, i, p.heatScore, 0));
+
 await db
   .insert(cacheEntries)
-  .values({ key: 'news_by_person', data: newsByPerson, updatedAt: new Date() })
+  .values({ key: 'trending:1h', data: trending1hFinal, updatedAt: new Date() })
   .onConflictDoUpdate({
     target: cacheEntries.key,
-    set: { data: newsByPerson, updatedAt: new Date() },
+    set: { data: trending1hFinal, updatedAt: new Date() },
   });
-console.log(`[news_by_person] Stored news for ${Object.keys(newsByPerson).length} people`);
+console.log(`[1h] Stored ${trending1hFinal.length} entries (${hourlyMatches.length} from Wikipedia, rest from heatScore)`);
 
-// Heat score update — for people with 3+ articles in the last hour, write a new
-// score_snapshot with a news-boosted heatScore. This makes leaderboard rankings
-// shift in near-real-time when news breaks about someone.
+await delay(2_000);
+
+// --- trending:24h (today's Wikipedia views) ---
+console.log('\n[24h] Fetching Wikipedia top articles for today...');
+// Note: today's data may lag by ~1h on Wikimedia's API.
+// Try today; fall back to yesterday if today isn't available yet.
+let dailyArticles = await fetchWikipediaTop(year, month, day);
+if (dailyArticles.length === 0) {
+  const yesterday = new Date(now);
+  yesterday.setUTCDate(yesterday.getUTCDate() - 1);
+  dailyArticles = await fetchWikipediaTop(
+    yesterday.getUTCFullYear().toString(),
+    String(yesterday.getUTCMonth() + 1).padStart(2, '0'),
+    String(yesterday.getUTCDate()).padStart(2, '0'),
+  );
+}
+console.log(`  → ${dailyArticles.length} Wikipedia articles`);
+
+const dailyMatches = dailyArticles
+  .filter(a => isPersonArticle(a.article))
+  .filter(a => titleToPerson.has(a.article));
+
+const trending24h = dailyMatches
+  .map(a => {
+    const p = titleToPerson.get(a.article)!;
+    return makeTrendingEntry(p, 0, a.views * (1 + Math.log1p(p.popularityScore) / 20), a.views);
+  })
+  .sort((a, b) => b.trendingScore - a.trendingScore)
+  .slice(0, 50)
+  .map((e, i) => ({ ...e, rank: i + 1 }));
+
+const trending24hFinal = trending24h.length > 0
+  ? trending24h
+  : scoredPeople
+      .filter(p => p.heatScore > 0)
+      .sort((a, b) => b.heatScore - a.heatScore)
+      .slice(0, 50)
+      .map((p, i) => makeTrendingEntry(p, i, p.heatScore, 0));
+
+await db
+  .insert(cacheEntries)
+  .values({ key: 'trending:24h', data: trending24hFinal, updatedAt: new Date() })
+  .onConflictDoUpdate({
+    target: cacheEntries.key,
+    set: { data: trending24hFinal, updatedAt: new Date() },
+  });
+console.log(`[24h] Stored ${trending24hFinal.length} entries (${dailyMatches.length} from Wikipedia)`);
+
+await delay(2_000);
+
+// --- trending:30d (heatScore ranking — most stable, updated by score:calculate) ---
+console.log('\n[30d] Building from heatScore rankings...');
+const trending30d = scoredPeople
+  .filter(p => p.heatScore > 0)
+  .sort((a, b) => b.heatScore - a.heatScore)
+  .slice(0, 50)
+  .map((p, i) => makeTrendingEntry(p, i, p.heatScore, 0));
+
+await db
+  .insert(cacheEntries)
+  .values({ key: 'trending:30d', data: trending30d, updatedAt: new Date() })
+  .onConflictDoUpdate({
+    target: cacheEntries.key,
+    set: { data: trending30d, updatedAt: new Date() },
+  });
+console.log(`[30d] Stored ${trending30d.length} entries`);
+
+// --- news_feed (top articles mentioning our known people, from daily Wikipedia matches) ---
+const newsFeed = dailyMatches.slice(0, 20).map(a => {
+  const p = titleToPerson.get(a.article)!;
+  return {
+    title:      `${p.displayName} is trending on Wikipedia`,
+    url:        `https://en.wikipedia.org/wiki/${a.article}`,
+    domain:     'en.wikipedia.org',
+    seendate:   new Date().toISOString().slice(0, 19).replace(/\D/g, '') + '00000',
+    personName: p.displayName,
+    personQid:  p.wikidataQid,
+  };
+});
+
+await db
+  .insert(cacheEntries)
+  .values({ key: 'news_feed', data: newsFeed, updatedAt: new Date() })
+  .onConflictDoUpdate({
+    target: cacheEntries.key,
+    set: { data: newsFeed, updatedAt: new Date() },
+  });
+console.log(`\n[news_feed] Stored ${newsFeed.length} entries`);
+
+// --- Heat score updates for people with big Wikipedia view spikes ---
+// Compare this hour's views to their popularityScore as a proxy for "baseline".
+// If hourly views are very high (> 10k) and the person has high popularity, boost heat.
 const heatUpdates: Array<{ name: string; oldHeat: number; newHeat: number }> = [];
-for (const person of scoredPeople) {
-  const articles = hourlyCountMap.get(person.wikidataQid);
-  if (!articles || articles.length < 3) continue;
-  // Log boost: 3 articles → +11pts, 10 → +24pts, 50 → +47pts (capped at 50pts boost)
-  const newsBoost = Math.min(50, Math.log1p(articles.length) * 12);
+for (const match of hourlyMatches) {
+  const person = titleToPerson.get(match.article);
+  if (!person || person.personId === 0) continue;
+  if (match.views < 10_000) continue; // only boost for very high hourly views
+
+  const newsBoost = Math.min(40, Math.log1p(match.views / 1000) * 8);
   const newHeat = Math.min(100, person.heatScore + newsBoost);
-  if (newHeat - person.heatScore < 3) continue; // skip trivial changes
+  if (newHeat - person.heatScore < 3) continue;
+
   await db.insert(scoreSnapshots).values({
     personId: person.personId,
     calculatedAt: new Date(),
-    scoreModelVersion: `${person.scoreModelVersion}-news`,
+    scoreModelVersion: `${person.scoreModelVersion}-wiki`,
     popularityScore: person.popularityScore,
     heatScore: newHeat,
     coverageScore: person.coverageScore,
@@ -326,52 +300,25 @@ for (const person of scoredPeople) {
     sentimentScore: null,
     controversyScore: null,
     explanationJson: {
-      score_model_version: `${person.scoreModelVersion}-news`,
+      score_model_version: `${person.scoreModelVersion}-wiki`,
       popularity_score: person.popularityScore,
       heat_score: newHeat,
       coverage_score: person.coverageScore,
-      news_articles_1h: articles.length,
-      heat_boost_from_news: newsBoost,
+      wikipedia_views_1h: match.views,
+      heat_boost_from_views: newsBoost,
       top_contributors: [
-        { signal: 'news_velocity_1h', impact: `+${newsBoost.toFixed(1)}`, reason: `${articles.length} articles in last hour` },
+        { signal: 'wikipedia_views_1h', impact: `+${newsBoost.toFixed(1)}`, reason: `${match.views.toLocaleString()} Wikipedia views in the last hour` },
       ],
     },
   });
   heatUpdates.push({ name: person.displayName, oldHeat: person.heatScore, newHeat });
 }
+
 if (heatUpdates.length > 0) {
-  console.log(`\n[heat] Updated ${heatUpdates.length} people from news spikes:`);
+  console.log(`\n[heat] Updated ${heatUpdates.length} people from Wikipedia spikes:`);
   for (const u of heatUpdates) {
     console.log(`  ${u.name}: ${u.oldHeat.toFixed(1)} → ${u.newHeat.toFixed(1)}`);
   }
 }
 
-// News feed: latest articles that mention any of our top scored people
-console.log('\n[news_feed] Fetching...');
-await delay(RATE_LIMIT_MS);
-const top8Names = `(${scoredPeople.slice(0, 8).map(p => `"${p.displayName}"`).join(' OR ')})`;
-const feedArticles = await fetchGDELTArticles(top8Names, '1440');
-
-const feed = feedArticles.slice(0, 20).map(a => {
-  const titleLower = a.title.toLowerCase();
-  const matched = scoredPeople.find(p => titleLower.includes(p.displayName.toLowerCase())) ?? scoredPeople[0]!;
-  return {
-    title:      a.title,
-    url:        a.url,
-    domain:     a.domain,
-    seendate:   a.seendate,
-    personName: matched.displayName,
-    personQid:  matched.wikidataQid,
-  };
-});
-
-await db
-  .insert(cacheEntries)
-  .values({ key: 'news_feed', data: feed, updatedAt: new Date() })
-  .onConflictDoUpdate({
-    target: cacheEntries.key,
-    set: { data: feed, updatedAt: new Date() },
-  });
-
-console.log(`[news_feed] Stored ${feed.length} articles`);
-console.log('\nTrending update complete!');
+console.log('\nTrending update complete! (Wikipedia-based, no GDELT calls)');
