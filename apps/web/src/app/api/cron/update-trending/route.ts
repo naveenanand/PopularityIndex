@@ -52,13 +52,11 @@ interface ScoredPerson {
   calculatedAt: Date;
 }
 
-// Wikipedia hourly/daily top-articles endpoint (used for 1h trending)
+// Wikipedia daily top-articles endpoint (used for 24h trending)
 async function fetchWikipediaTop(
-  year: string, month: string, day: string, hour?: string,
+  year: string, month: string, day: string,
 ): Promise<Array<{ article: string; views: number }>> {
-  const path = hour
-    ? `metrics/pageviews/top/en.wikipedia.org/all-access/${year}/${month}/${day}/${hour}`
-    : `metrics/pageviews/top/en.wikipedia.org/all-access/${year}/${month}/${day}`;
+  const path = `metrics/pageviews/top/en.wikipedia.org/all-access/${year}/${month}/${day}`;
   try {
     const res = await fetch(`https://wikimedia.org/api/rest_v1/${path}`, {
       headers: { 'User-Agent': UA },
@@ -79,26 +77,76 @@ async function fetchWikipediaTop(
   }
 }
 
-// Wikimedia hourly endpoint lags 1-3+ hours. Try going back up to maxBack hours.
-async function fetchWikipediaHourly(
-  now: Date, maxBack = 4,
-): Promise<Array<{ article: string; views: number }>> {
-  const pad = (n: number) => String(n).padStart(2, '0');
-  for (let back = 0; back <= maxBack; back++) {
-    const t = new Date(now);
-    t.setUTCHours(t.getUTCHours() - back);
-    const articles = await fetchWikipediaTop(
-      t.getUTCFullYear().toString(),
-      pad(t.getUTCMonth() + 1),
-      pad(t.getUTCDate()),
-      pad(t.getUTCHours()),
-    );
-    if (articles.length > 0) {
-      console.log(`[1h] Using -${back}h data (${pad(t.getUTCHours())}:xx UTC)`);
-      return articles;
-    }
+/**
+ * Fetch hourly Wikipedia pageviews for a specific person using the per-article
+ * endpoint. Unlike the top-articles hourly endpoint (which is unreliable and
+ * returns empty constantly), this endpoint is always available — it's the same
+ * one used by the scoring engine for daily views.
+ *
+ * Returns total views across the two most recently completed UTC hours so that
+ * the 1h tab reflects genuine recent reading activity.
+ */
+async function fetchPersonHourlyViews(
+  title: string,
+  startHour: string,
+  endHour: string,
+): Promise<number> {
+  const encoded = encodeURIComponent(title);
+  const path = `metrics/pageviews/per-article/en.wikipedia.org/all-access/user/${encoded}/hourly/${startHour}/${endHour}`;
+  try {
+    const res = await fetch(`https://wikimedia.org/api/rest_v1/${path}`, {
+      headers: { 'User-Agent': UA },
+      signal: AbortSignal.timeout(8_000),
+      cache: 'no-store',
+    });
+    if (!res.ok) return 0;
+    const data = await res.json() as { items?: Array<{ views: number }> };
+    return (data.items ?? []).reduce((sum, item) => sum + item.views, 0);
+  } catch {
+    return 0;
   }
-  return [];
+}
+
+/**
+ * Query hourly Wikipedia views for all tracked people in parallel batches.
+ * Covers the last 2 complete UTC hours so we always have data regardless of
+ * Wikimedia's publication lag (which affects top-articles but not per-article).
+ */
+async function fetchAllPersonHourlyViews(
+  people: ScoredPerson[],
+): Promise<Array<{ person: ScoredPerson; views: number }>> {
+  const now = new Date();
+  const pad = (n: number) => String(n).padStart(2, '0');
+  const fmt = (d: Date) =>
+    `${d.getUTCFullYear()}${pad(d.getUTCMonth() + 1)}${pad(d.getUTCDate())}${pad(d.getUTCHours())}`;
+
+  // Last 2 complete hours (current hour is still accumulating)
+  const end = new Date(now);
+  end.setUTCHours(end.getUTCHours() - 1);
+  const start = new Date(end);
+  start.setUTCHours(start.getUTCHours() - 1);
+
+  const startStr = fmt(start);
+  const endStr   = fmt(end);
+  console.log(`[1h] Querying per-article views ${startStr}–${endStr} for ${people.length} people`);
+
+  const results: Array<{ person: ScoredPerson; views: number }> = [];
+  const CONCURRENCY = 10;
+
+  for (let i = 0; i < people.length; i += CONCURRENCY) {
+    const batch = people.slice(i, i + CONCURRENCY);
+    const batchResults = await Promise.all(batch.map(async p => {
+      const title = p.displayName.replace(/ /g, '_');
+      const views = await fetchPersonHourlyViews(title, startStr, endStr);
+      return { person: p, views };
+    }));
+    results.push(...batchResults);
+    if (i + CONCURRENCY < people.length) await delay(150);
+  }
+
+  const matched = results.filter(r => r.views > 0);
+  console.log(`[1h] ${matched.length} people had views in this window`);
+  return matched;
 }
 
 /**
@@ -118,13 +166,6 @@ function computeLiveHeat(timespan: string, metricValue: number): number {
     return Math.min(100, (Math.log10(Math.max(1, metricValue)) / 6) * 100);
   }
   return Math.min(100, (Math.log1p(metricValue) / Math.log1p(100)) * 100);
-}
-
-const WIKI_SYSTEM_PREFIXES = ['Special:', 'Wikipedia:', 'Portal:', 'Help:', 'Template:', 'File:', 'Category:', 'Talk:'];
-function isPersonArticle(title: string): boolean {
-  return !WIKI_SYSTEM_PREFIXES.some(p => title.startsWith(p))
-    && title !== 'Main_Page'
-    && !title.includes('_(disambiguation)');
 }
 
 async function fetchGDELT(query: string, gdeltMinutes: string): Promise<GDELTArticle[]> {
@@ -208,46 +249,33 @@ export async function GET(request: Request) {
     return NextResponse.json({ ok: true, message: 'No scored people — skipped' });
   }
 
-  // Build Wikipedia article title → person lookup for 1h matching
-  const titleToPerson = new Map<string, ScoredPerson>();
-  for (const p of scoredPeople) {
-    titleToPerson.set(p.displayName.replace(/ /g, '_'), p);
-  }
-
   const results: Record<string, number> = {};
 
-  // ── trending:1h — Wikipedia hourly page views ──────────────────────────────
-  // Wikimedia publishes hourly top-articles data with 1-3+ hour lag.
-  // Try up to 4 hours back before falling through to heat score.
-  const now = new Date();
+  // ── trending:1h — per-article Wikipedia hourly views ──────────────────────
+  // We query each tracked person's Wikipedia views directly using the
+  // per-article endpoint. This is always available (unlike the top-articles
+  // hourly endpoint which consistently returns empty) and gives true
+  // last-hour data — whoever is actually being read right now.
+  const hourlyData = await fetchAllPersonHourlyViews(scoredPeople);
 
-  const wikiHourly = await fetchWikipediaHourly(now, 4);
-
-  const hourlyMatches = wikiHourly
-    .filter(a => isPersonArticle(a.article))
-    .filter(a => titleToPerson.has(a.article));
-
-  // Rank PURELY by Wikipedia page views — no popularity multiplier.
-  // liveHeat is derived from actual hourly views, changes every cron run.
-  const trending1h = hourlyMatches
-    .map(a => {
-      const p = titleToPerson.get(a.article)!;
-      return {
-        rank: 0, wikidataQid: p.wikidataQid, displayName: p.displayName,
-        photoUrl: p.photoUrl, occupationSummary: p.occupationSummary,
-        popularityScore: p.popularityScore, heatScore: p.heatScore,
-        coverageScore: p.coverageScore, coverageLabel: 'Partial coverage',
-        scoreModelVersion: p.scoreModelVersion, calculatedAt: p.calculatedAt,
-        articleCount: a.views,
-        liveHeat: computeLiveHeat('1h', a.views),
-        trendingScore: a.views,
-        trendingArticles: [] as GDELTArticle[],
-      };
-    })
-    .sort((a, b) => b.liveHeat - a.liveHeat)
+  const trending1h = hourlyData
+    .map(({ person: p, views }) => ({
+      rank: 0, wikidataQid: p.wikidataQid, displayName: p.displayName,
+      photoUrl: p.photoUrl, occupationSummary: p.occupationSummary,
+      popularityScore: p.popularityScore, heatScore: p.heatScore,
+      coverageScore: p.coverageScore, coverageLabel: 'Partial coverage',
+      scoreModelVersion: p.scoreModelVersion, calculatedAt: p.calculatedAt,
+      articleCount: views,
+      liveHeat: computeLiveHeat('1h', views),
+      trendingScore: views,
+      trendingArticles: [] as GDELTArticle[],
+    }))
+    .sort((a, b) => b.trendingScore - a.trendingScore)
     .slice(0, 50)
     .map((e, i) => ({ ...e, rank: i + 1 }));
 
+  // Only fall back to daily data (not heatScore) so the list still changes
+  // between runs even when the per-article endpoint returns nothing
   const trending1hFinal = trending1h.length > 0
     ? trending1h
     : scoredPeople
