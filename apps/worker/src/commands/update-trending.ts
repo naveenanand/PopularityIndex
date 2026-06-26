@@ -63,7 +63,23 @@ async function fetchWikipediaTop(year: string, month: string, day: string, hour?
   }
 }
 
-function makeTrendingEntry(p: ScoredPerson, i: number, trendingScore: number, articleCount: number) {
+/**
+ * Compute live heat from real-time activity — mirrors the cron formula.
+ * 1h (Wikipedia views): log10 scale, 1K→50, 10K→67, 100K→83, 1M→100
+ * 24h/30d (Wikipedia views — larger absolute numbers than GDELT): same log10 scale
+ */
+function computeLiveHeat(timespan: string, metricValue: number): number {
+  if (timespan === '1h') {
+    return Math.min(100, (Math.log10(Math.max(1, metricValue)) / 6) * 100);
+  }
+  // 24h daily views are much larger — anchor at log10 of typical daily max (~5M)
+  return Math.min(100, (Math.log10(Math.max(1, metricValue)) / Math.log10(5_000_000)) * 100);
+}
+
+function makeTrendingEntry(
+  p: ScoredPerson, i: number, trendingScore: number, articleCount: number,
+  timespan: string,
+) {
   return {
     rank:              i + 1,
     wikidataQid:       p.wikidataQid,
@@ -77,6 +93,7 @@ function makeTrendingEntry(p: ScoredPerson, i: number, trendingScore: number, ar
     scoreModelVersion: p.scoreModelVersion,
     calculatedAt:      p.calculatedAt,
     articleCount,
+    liveHeat:          computeLiveHeat(timespan, articleCount),
     trendingScore,
     trendingArticles:  [],
   };
@@ -281,14 +298,13 @@ const hourlyMatches = hourlyArticles
   .filter(a => isPersonArticle(a.article))
   .filter(a => titleToPerson.has(a.article));
 
-// Rank purely by Wikipedia views this hour — no popularity blending.
-// The 1h tab should show who people are actually reading RIGHT NOW.
+// Rank by liveHeat (derived from Wikipedia views) — changes every run.
 const trending1h = hourlyMatches
   .map(a => {
     const p = titleToPerson.get(a.article)!;
-    return makeTrendingEntry(p, 0, a.views, a.views);
+    return makeTrendingEntry(p, 0, a.views, a.views, '1h');
   })
-  .sort((a, b) => b.trendingScore - a.trendingScore)
+  .sort((a, b) => b.liveHeat - a.liveHeat)
   .slice(0, 50)
   .map((e, i) => ({ ...e, rank: i + 1 }));
 
@@ -299,7 +315,7 @@ const trending1hFinal = trending1h.length > 0
       .filter(p => p.heatScore > 0)
       .sort((a, b) => b.heatScore - a.heatScore)
       .slice(0, 50)
-      .map((p, i) => makeTrendingEntry(p, i, p.heatScore, 0));
+      .map((p, i) => makeTrendingEntry(p, i, p.heatScore, 0, '1h'));
 
 await db
   .insert(cacheEntries)
@@ -335,9 +351,9 @@ const dailyMatches = dailyArticles
 const trending24h = dailyMatches
   .map(a => {
     const p = titleToPerson.get(a.article)!;
-    return makeTrendingEntry(p, 0, a.views * (1 + Math.log1p(p.popularityScore) / 20), a.views);
+    return makeTrendingEntry(p, 0, a.views, a.views, '24h');
   })
-  .sort((a, b) => b.trendingScore - a.trendingScore)
+  .sort((a, b) => b.liveHeat - a.liveHeat)
   .slice(0, 50)
   .map((e, i) => ({ ...e, rank: i + 1 }));
 
@@ -347,7 +363,7 @@ const trending24hFinal = trending24h.length > 0
       .filter(p => p.heatScore > 0)
       .sort((a, b) => b.heatScore - a.heatScore)
       .slice(0, 50)
-      .map((p, i) => makeTrendingEntry(p, i, p.heatScore, 0));
+      .map((p, i) => makeTrendingEntry(p, i, p.heatScore, 0, '24h'));
 
 await db
   .insert(cacheEntries)
@@ -366,7 +382,7 @@ const trending30d = scoredPeople
   .filter(p => p.heatScore > 0)
   .sort((a, b) => b.heatScore - a.heatScore)
   .slice(0, 50)
-  .map((p, i) => makeTrendingEntry(p, i, p.heatScore, 0));
+  .map((p, i) => makeTrendingEntry(p, i, p.heatScore, 0, '30d'));
 
 await db
   .insert(cacheEntries)
