@@ -143,12 +143,87 @@ const month = String(now.getUTCMonth() + 1).padStart(2, '0');
 const day   = String(now.getUTCDate()).padStart(2, '0');
 const hour  = String(now.getUTCHours()).padStart(2, '0');
 
+const knownTitles = new Set(titleToPerson.keys());
+
 // Filter out non-person Wikipedia system pages
 const SYSTEM_PREFIXES = ['Special:', 'Wikipedia:', 'Portal:', 'Help:', 'Template:', 'File:', 'Category:', 'Talk:'];
 function isPersonArticle(title: string): boolean {
   return !SYSTEM_PREFIXES.some(p => title.startsWith(p))
     && title !== 'Main_Page'
     && !title.includes('_(disambiguation)');
+}
+
+// Auto-discover: look up Wikidata QID for a Wikipedia article title
+async function lookupWikidataQid(title: string): Promise<string | null> {
+  try {
+    const url = `https://en.wikipedia.org/w/api.php?action=query&titles=${encodeURIComponent(title)}&prop=pageprops&ppprop=wikibase_item&format=json&formatversion=2`;
+    const res = await fetch(url, {
+      headers: { 'User-Agent': UA },
+      signal: AbortSignal.timeout(8_000),
+    });
+    if (!res.ok) return null;
+    const data = await res.json() as {
+      query?: { pages?: Array<{ pageprops?: { wikibase_item?: string }; missing?: boolean }> }
+    };
+    const page = data.query?.pages?.[0];
+    if (!page || page.missing) return null;
+    return page.pageprops?.wikibase_item ?? null;
+  } catch {
+    return null;
+  }
+}
+
+// Attempt to add newly discovered people from Wikipedia trending
+async function autoDiscoverPeople(
+  articles: WikipediaTopArticle[],
+  knownTitles: Set<string>,
+  minViews = 5_000,
+): Promise<number> {
+  const unknownHighTraffic = articles
+    .filter(a => isPersonArticle(a.article) && !knownTitles.has(a.article) && a.views >= minViews)
+    .slice(0, 10); // cap at 10 new people per run to avoid rate-limit bursts
+
+  if (unknownHighTraffic.length === 0) return 0;
+
+  console.log(`\n[discover] Found ${unknownHighTraffic.length} unknown high-traffic articles to investigate...`);
+
+  let added = 0;
+  for (const article of unknownHighTraffic) {
+    const displayName = article.article.replace(/_/g, ' ');
+    const qid = await lookupWikidataQid(article.article);
+    await delay(500); // rate-limit courtesy
+
+    if (!qid) {
+      console.log(`  [skip] No QID found for "${displayName}"`);
+      continue;
+    }
+
+    // Check if QID already exists in DB (maybe under a different title)
+    const existing = await db.select({ id: people.id }).from(people)
+      .where(eq(people.wikidataQid, qid))
+      .limit(1);
+
+    if (existing.length > 0) {
+      // Person exists under a different display name — update the title map
+      console.log(`  [skip] ${displayName} (${qid}) already in DB`);
+      continue;
+    }
+
+    // Insert new person with minimal info — scoring will enrich them
+    const normalizedName = displayName.toLowerCase().replace(/[^a-z0-9 ]/g, '').replace(/\s+/g, ' ').trim();
+    await db.insert(people).values({
+      wikidataQid: qid,
+      displayName,
+      normalizedName,
+      occupationSummary: null,
+      photoUrl: null,
+    }).onConflictDoNothing();
+
+    console.log(`  [added] ${displayName} (${qid}) — ${article.views.toLocaleString()} views`);
+    added++;
+  }
+
+  return added;
 }
 
 // --- trending:1h (current hour Wikipedia views) ---
@@ -319,6 +394,14 @@ if (heatUpdates.length > 0) {
   for (const u of heatUpdates) {
     console.log(`  ${u.name}: ${u.oldHeat.toFixed(1)} → ${u.newHeat.toFixed(1)}`);
   }
+}
+
+// Auto-discover: add new people from daily and hourly Wikipedia trending
+// Uses daily articles (larger dataset) as the primary source
+const allArticlesForDiscovery = dailyArticles.length > 0 ? dailyArticles : hourlyArticles;
+const discovered = await autoDiscoverPeople(allArticlesForDiscovery, knownTitles);
+if (discovered > 0) {
+  console.log(`\n[discover] Added ${discovered} new people. Run \`pnpm score:calculate\` to score them.`);
 }
 
 console.log('\nTrending update complete! (Wikipedia-based, no GDELT calls)');

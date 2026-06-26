@@ -447,6 +447,191 @@ export async function getPersonTrendingReason(
   };
 }
 
+// ─── Categories ──────────────────────────────────────────────────────────────
+
+export interface CategoryStat {
+  slug: string;       // URL-safe version (e.g. "politician")
+  label: string;      // display version (e.g. "Politician")
+  count: number;      // total people in DB with this occupation
+  scoredCount: number; // people who also have a score snapshot
+}
+
+export async function getCategories(): Promise<CategoryStat[]> {
+  const conn = await db();
+  if (!conn) return [];
+
+  // Count all people per occupation
+  const allRows = await conn
+    .select({ occ: people.occupationSummary, total: count() })
+    .from(people)
+    .where(sql`${people.occupationSummary} is not null`)
+    .groupBy(people.occupationSummary)
+    .orderBy(desc(sql`count(*)`));
+
+  // Count scored people per occupation (need a join)
+  const latestScores = conn
+    .select({ personId: scoreSnapshots.personId })
+    .from(scoreSnapshots)
+    .groupBy(scoreSnapshots.personId)
+    .as('has_score');
+
+  const scoredRows = await conn
+    .select({ occ: people.occupationSummary, total: count() })
+    .from(people)
+    .innerJoin(latestScores, eq(latestScores.personId, people.id))
+    .where(sql`${people.occupationSummary} is not null`)
+    .groupBy(people.occupationSummary);
+
+  const scoredMap = new Map(scoredRows.map(r => [r.occ, Number(r.total)]));
+
+  return allRows
+    .filter(r => r.occ && Number(r.total) >= 2)
+    .map(r => ({
+      slug: r.occ!.toLowerCase().replace(/\s+/g, '-'),
+      label: r.occ!.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase()),
+      count: Number(r.total),
+      scoredCount: scoredMap.get(r.occ!) ?? 0,
+    }))
+    .sort((a, b) => b.scoredCount - a.scoredCount || b.count - a.count);
+}
+
+export async function getPeopleByCategory(
+  occupationSlug: string,
+  limit = 100,
+): Promise<LeaderboardEntry[]> {
+  const conn = await db();
+  if (!conn) return [];
+
+  // Convert slug back to a pattern for the DB (stored with underscores or spaces)
+  const pattern = occupationSlug.replace(/-/g, '_');
+
+  const { latestScores } = buildLeaderboardBase(conn, 'popularity');
+
+  const rows = await conn
+    .select({
+      person: {
+        id: people.id,
+        wikidataQid: people.wikidataQid,
+        displayName: people.displayName,
+        occupationSummary: people.occupationSummary,
+        photoUrl: people.photoUrl,
+      },
+      score: scoreSnapshots,
+    })
+    .from(people)
+    .innerJoin(latestScores, eq(latestScores.personId, people.id))
+    .innerJoin(
+      scoreSnapshots,
+      and(
+        eq(scoreSnapshots.personId, people.id),
+        eq(scoreSnapshots.calculatedAt, sql`${latestScores.maxCalcAt}`),
+      ),
+    )
+    .where(ilike(people.occupationSummary, `%${pattern}%`))
+    .orderBy(desc(scoreSnapshots.popularityScore))
+    .limit(limit);
+
+  return rows.map((r, i) => ({
+    rank: i + 1,
+    wikidataQid: r.person.wikidataQid,
+    displayName: r.person.displayName,
+    occupationSummary: r.person.occupationSummary,
+    photoUrl: r.person.photoUrl,
+    popularityScore: r.score.popularityScore,
+    heatScore: r.score.heatScore,
+    coverageScore: r.score.coverageScore,
+    coverageLabel: (r.score.explanationJson as { coverage_label?: string } | null)?.coverage_label ?? 'Partial coverage',
+    scoreModelVersion: r.score.scoreModelVersion,
+    calculatedAt: r.score.calculatedAt,
+  }));
+}
+
+// ─── Rising stars / biggest movers ───────────────────────────────────────────
+
+export interface MoverEntry {
+  wikidataQid: string;
+  displayName: string;
+  occupationSummary: string | null;
+  photoUrl: string | null;
+  currentScore: number;
+  previousScore: number;
+  delta: number;           // currentScore - previousScore
+  deltaPercent: number;    // percentage change
+}
+
+export async function getMovers(
+  metric: 'popularity' | 'heat' = 'popularity',
+  windowHours = 48,
+  limit = 10,
+): Promise<{ rising: MoverEntry[]; falling: MoverEntry[] }> {
+  const conn = await db();
+  if (!conn) return { rising: [], falling: [] };
+
+  const cutoff = new Date(Date.now() - windowHours * 3_600_000);
+  const col = metric === 'heat' ? 'heat_score' : 'popularity_score';
+
+  // Raw SQL to avoid complex Drizzle join gymnastics:
+  // For each person get their latest score + their score at/after the window cutoff
+  const rows = await conn.execute(sql`
+    SELECT
+      p.wikidata_qid,
+      p.display_name,
+      p.occupation_summary,
+      p.photo_url,
+      cur.${sql.raw(col)}   AS current_score,
+      prev.${sql.raw(col)}  AS previous_score
+    FROM people p
+    JOIN score_snapshots cur  ON cur.person_id = p.id
+      AND cur.calculated_at = (
+        SELECT max(s2.calculated_at) FROM score_snapshots s2 WHERE s2.person_id = p.id
+      )
+    JOIN score_snapshots prev ON prev.person_id = p.id
+      AND prev.calculated_at = (
+        SELECT min(s3.calculated_at) FROM score_snapshots s3
+        WHERE s3.person_id = p.id AND s3.calculated_at >= ${cutoff}
+      )
+    WHERE cur.${sql.raw(col)} <> prev.${sql.raw(col)}
+  `);
+
+  const movers: MoverEntry[] = (rows as unknown as Array<{
+    wikidata_qid: string;
+    display_name: string;
+    occupation_summary: string | null;
+    photo_url: string | null;
+    current_score: number;
+    previous_score: number;
+  }>).map(r => {
+    const delta = r.current_score - r.previous_score;
+    return {
+      wikidataQid: r.wikidata_qid,
+      displayName: r.display_name,
+      occupationSummary: r.occupation_summary,
+      photoUrl: r.photo_url,
+      currentScore: r.current_score,
+      previousScore: r.previous_score,
+      delta,
+      deltaPercent: r.previous_score > 0 ? (delta / r.previous_score) * 100 : 0,
+    };
+  }).filter(m => Math.abs(m.delta) >= 1);
+
+  movers.sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta));
+
+  return {
+    rising: movers.filter(m => m.delta > 0).slice(0, limit),
+    falling: movers.filter(m => m.delta < 0).slice(0, limit),
+  };
+}
+
+// ─── Compare two people ───────────────────────────────────────────────────────
+
+export async function getComparisonData(qidA: string, qidB: string) {
+  const [a, b] = await Promise.all([
+    getPersonWithScores(qidA),
+    getPersonWithScores(qidB),
+  ]);
+  return { a, b };
+}
+
 function buildBullets(count: number, timespan: string, articles: NewsArticle[]): string[] {
   const bullets: string[] = [];
   bullets.push(`Mentioned in ${count} news article${count !== 1 ? 's' : ''} in the ${timespan}`);

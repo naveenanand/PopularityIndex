@@ -2,10 +2,11 @@ export const revalidate = 300;
 
 import Link from 'next/link';
 import type { LeaderboardEntry, TrendingEntry, ViewPerson } from '../lib/api';
-import { getLeaderboard, getTrendingLeaderboard, getNewsFeed } from '../lib/api';
+import { getLeaderboard, getTrendingLeaderboard, getNewsFeed, getMovers } from '../lib/api';
 import { HeroSection } from '../components/home/HeroSection';
 import { PersonCarousel } from '../components/home/PersonCarousel';
 import { NewsFeedSection } from '../components/home/NewsFeedSection';
+import { MoversSection } from '../components/home/MoversSection';
 
 type SearchParams = Promise<{ sort?: string; page?: string }>;
 
@@ -94,7 +95,7 @@ export default async function HomePage({ searchParams }: { searchParams: SearchP
   const isDefaultView = sortKey === 'popularity' && currentPage === 1;
   const cfg = VIEW_CONFIG[sortKey];
 
-  const [leaderboardEntries, trendingEntries, newsFeed] = await Promise.all([
+  const [leaderboardEntries, trendingEntries, newsFeed, movers] = await Promise.all([
     !isTrending
       ? getLeaderboard(sortKey === 'heat' ? 'heat' : 'popularity', PAGE_SIZE, offset)
       : Promise.resolve([] as LeaderboardEntry[]),
@@ -102,6 +103,7 @@ export default async function HomePage({ searchParams }: { searchParams: SearchP
       ? getTrendingLeaderboard(TIMESPANS[sortKey as keyof typeof TIMESPANS], TRENDING_LIMIT)
       : Promise.resolve([] as TrendingEntry[]),
     isDefaultView ? getNewsFeed() : Promise.resolve([]),
+    isDefaultView ? getMovers('popularity', 48, 5) : Promise.resolve({ rising: [], falling: [] }),
   ]);
 
   const viewPeople: ViewPerson[] = isTrending
@@ -240,6 +242,9 @@ export default async function HomePage({ searchParams }: { searchParams: SearchP
 
         {/* News feed — default view only */}
         {isDefaultView && newsFeed.length > 0 && <NewsFeedSection articles={newsFeed} />}
+
+        {/* Rising stars / biggest movers — default view only */}
+        {isDefaultView && <MoversSection rising={movers.rising} falling={movers.falling} />}
 
         {/* Pagination — leaderboard only, trending has no pagination */}
         {!isTrending && (hasPrevPage || hasNextPage) && (
