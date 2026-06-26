@@ -1,10 +1,9 @@
 export const revalidate = 60;
 
 import Link from 'next/link';
-import { notFound } from 'next/navigation';
-import { getPersonWithScores } from '../../lib/api';
+import { getPersonWithScores, getLeaderboard } from '../../lib/api';
 import { formatScore, formatDate, coverageBadgeColor } from '../../lib/formatters';
-import { ComparePicker } from '../../components/compare/ComparePicker';
+import { ComparePickList } from '../../components/compare/ComparePickList';
 import type { ScoreExplanation } from '@pai/shared';
 
 type SearchParams = Promise<{ a?: string; b?: string }>;
@@ -27,172 +26,201 @@ const METRICS = [
   { label: 'Confidence', key: 'confidenceScore' as const, color: 'text-zinc-300' },
 ];
 
-function PersonCard({ data }: { data: NonNullable<Awaited<ReturnType<typeof getPersonWithScores>>> }) {
-  const { person, latestScore } = data;
-  return (
-    <div className="space-y-4">
-      <div className="text-center space-y-3">
-        {person.photoUrl ? (
-          <img
-            src={person.photoUrl}
-            alt={person.displayName}
-            className="w-24 h-24 rounded-full object-cover object-top border-4 border-zinc-800 mx-auto"
-          />
-        ) : (
-          <div className="w-24 h-24 rounded-full bg-zinc-700 border-4 border-zinc-800 flex items-center justify-center text-zinc-300 font-black text-3xl mx-auto">
-            {person.displayName.charAt(0)}
-          </div>
-        )}
-        <div>
-          <Link
-            href={`/people/${person.wikidataQid}`}
-            className="font-black text-xl text-white hover:text-red-400 transition-colors"
-          >
-            {person.displayName}
-          </Link>
-          {person.occupationSummary && (
-            <p className="text-zinc-500 text-sm capitalize mt-0.5">
-              {person.occupationSummary.replace(/_/g, ' ')}
-            </p>
-          )}
-          <span className="text-[10px] font-mono text-zinc-700">{person.wikidataQid}</span>
-        </div>
-      </div>
-
-      {latestScore ? (
-        <div className="space-y-2">
-          {METRICS.map(m => (
-            <div key={m.key} className="bg-zinc-950 rounded-xl p-4 text-center border border-zinc-800">
-              <div className={`text-3xl font-black ${m.color}`}>{formatScore(latestScore[m.key])}</div>
-              <div className="text-xs text-zinc-500 mt-1">{m.label}</div>
-            </div>
-          ))}
-        </div>
-      ) : (
-        <div className="bg-zinc-900 rounded-xl border border-zinc-800 p-4 text-center text-zinc-500 text-sm">
-          No score yet
-        </div>
-      )}
-    </div>
-  );
-}
-
 export default async function ComparePage({ searchParams }: PageProps) {
   const { a, b } = await searchParams;
 
-  // No params at all — full empty state
-  if (!a && !b) {
-    return (
-      <div className="max-w-2xl mx-auto px-4 py-20 text-center space-y-6">
-        <div>
-          <h1 className="text-3xl font-black text-white">Compare Two People</h1>
-          <p className="text-zinc-500 text-sm mt-2">
-            Compare popularity scores, heat, and signals side by side.
-          </p>
-        </div>
-        <ComparePicker qidA={null} nameA={null} />
-      </div>
-    );
-  }
-
-  // Only A provided — show person A + picker for B
+  // ── Pick mode: a is set, b is not ──────────────────────────────────────────
   if (a && !b) {
-    const dataA = await getPersonWithScores(a);
+    const [dataA, leaderboard] = await Promise.all([
+      getPersonWithScores(a),
+      getLeaderboard('popularity', 100, 0),
+    ]);
+
+    // Filter out person A from the list
+    const pickList = leaderboard
+      .filter(p => p.wikidataQid !== a)
+      .map(p => ({
+        wikidataQid: p.wikidataQid,
+        displayName: p.displayName,
+        occupationSummary: p.occupationSummary,
+        photoUrl: p.photoUrl ?? null,
+        popularityScore: p.popularityScore,
+      }));
+
     return (
-      <div className="max-w-5xl mx-auto px-4 sm:px-6 py-10 space-y-8">
+      <div className="max-w-6xl mx-auto px-4 sm:px-6 py-8 space-y-6">
+        {/* Breadcrumb */}
         <div className="flex items-center gap-2 text-xs text-zinc-600 uppercase tracking-widest font-semibold">
           <Link href="/" className="hover:text-zinc-400 transition-colors">Home</Link>
           <span>/</span>
           <span className="text-zinc-500">Compare</span>
         </div>
 
-        <div>
-          <h1 className="text-3xl font-black text-white">Compare</h1>
-          <p className="text-zinc-500 text-sm mt-1">Search for a second person to compare.</p>
+        {/* Header with selected person chip */}
+        <div className="space-y-1">
+          <h1 className="text-2xl font-black text-white">Comparing</h1>
+          <p className="text-zinc-500 text-sm">Select someone to compare against</p>
         </div>
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-6 items-start">
-          {/* Person A */}
-          <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-6">
-            {dataA ? <PersonCard data={dataA} /> : (
-              <p className="text-zinc-500 text-center py-8">Person not found: {a}</p>
+        {/* Selected person chip */}
+        <div className="flex items-center gap-3 flex-wrap">
+          <div className="flex items-center gap-2 bg-red-600/10 border border-red-600/30 rounded-full pl-2 pr-3 py-1.5">
+            {dataA?.person.photoUrl ? (
+              <img
+                src={dataA.person.photoUrl}
+                alt={dataA.person.displayName}
+                className="w-6 h-6 rounded-full object-cover object-top flex-shrink-0"
+              />
+            ) : (
+              <div className="w-6 h-6 rounded-full bg-zinc-700 flex items-center justify-center text-zinc-400 font-bold text-[10px] flex-shrink-0">
+                {dataA?.person.displayName[0]}
+              </div>
             )}
+            <span className="text-sm font-semibold text-white">
+              {dataA?.person.displayName ?? a}
+            </span>
+            <span className="text-xs text-zinc-500">
+              {dataA?.latestScore ? formatScore(dataA.latestScore.popularityScore) : '—'}
+            </span>
+            <Link
+              href="/compare"
+              className="text-zinc-500 hover:text-zinc-300 ml-1 transition-colors"
+              title="Remove"
+            >
+              ×
+            </Link>
           </div>
 
-          {/* Search for B */}
-          <div className="bg-zinc-900 border border-zinc-700 border-dashed rounded-2xl p-6 flex flex-col items-center justify-center min-h-[300px] space-y-4">
-            <p className="text-zinc-400 font-semibold">Pick someone to compare against</p>
-            <ComparePicker qidA={a} nameA={dataA?.person.displayName ?? null} />
+          <span className="text-zinc-600 text-sm font-medium">vs</span>
+
+          <div className="flex items-center gap-2 bg-zinc-800 border border-dashed border-zinc-600 rounded-full px-3 py-1.5">
+            <span className="text-sm text-zinc-500">Pick someone below</span>
           </div>
         </div>
+
+        {/* Scrollable person pick list with search */}
+        <ComparePickList people={pickList} qidA={a} />
       </div>
     );
   }
 
-  // Both A and B provided — full comparison
+  // ── Full comparison: both a and b are set ───────────────────────────────────
   const [dataA, dataB] = await Promise.all([
     a ? getPersonWithScores(a) : Promise.resolve(null),
     b ? getPersonWithScores(b) : Promise.resolve(null),
   ]);
 
-  if (!dataA && !dataB) {
-    return (
-      <div className="max-w-2xl mx-auto px-4 py-20 text-center">
-        <p className="text-zinc-400 text-lg font-medium">Neither person was found.</p>
-        <Link href="/browse" className="text-sm text-red-400 hover:underline mt-4 inline-block">Browse all people →</Link>
-      </div>
-    );
-  }
-
   const explanationA = dataA?.latestScore?.explanationJson as ScoreExplanation | undefined;
   const explanationB = dataB?.latestScore?.explanationJson as ScoreExplanation | undefined;
 
   return (
-    <div className="max-w-5xl mx-auto px-4 sm:px-6 py-10 space-y-10">
+    <div className="max-w-5xl mx-auto px-4 sm:px-6 py-8 space-y-8">
+      {/* Breadcrumb */}
       <div className="flex items-center gap-2 text-xs text-zinc-600 uppercase tracking-widest font-semibold">
         <Link href="/" className="hover:text-zinc-400 transition-colors">Home</Link>
         <span>/</span>
         <span className="text-zinc-500">Compare</span>
       </div>
 
-      <div className="flex items-start justify-between gap-4 flex-wrap">
-        <div>
-          <h1 className="text-3xl font-black text-white">Head-to-Head</h1>
-          <p className="text-zinc-500 text-sm mt-1">
-            {dataA?.person.displayName ?? a} vs {dataB?.person.displayName ?? b}
-          </p>
-        </div>
-        {/* Swap / change */}
-        <div className="flex gap-2">
+      {/* Selected people chips + controls */}
+      <div className="space-y-3">
+        <h1 className="text-2xl font-black text-white">Head-to-Head</h1>
+        <div className="flex items-center gap-3 flex-wrap">
+          {/* Person A chip */}
+          <div className="flex items-center gap-2 bg-red-600/10 border border-red-600/30 rounded-full pl-2 pr-3 py-1.5">
+            {dataA?.person.photoUrl ? (
+              <img src={dataA.person.photoUrl} alt={dataA.person.displayName}
+                className="w-6 h-6 rounded-full object-cover object-top flex-shrink-0" />
+            ) : (
+              <div className="w-6 h-6 rounded-full bg-zinc-700 flex items-center justify-center text-zinc-400 font-bold text-[10px]">
+                {dataA?.person.displayName[0]}
+              </div>
+            )}
+            <span className="text-sm font-semibold text-white">{dataA?.person.displayName ?? a}</span>
+            {b && (
+              <Link href={`/compare?a=${b}`} className="text-zinc-500 hover:text-red-400 ml-1 transition-colors" title="Remove">×</Link>
+            )}
+          </div>
+
+          <span className="text-zinc-500 font-bold">vs</span>
+
+          {/* Person B chip */}
+          <div className="flex items-center gap-2 bg-blue-600/10 border border-blue-600/30 rounded-full pl-2 pr-3 py-1.5">
+            {dataB?.person.photoUrl ? (
+              <img src={dataB.person.photoUrl} alt={dataB.person.displayName}
+                className="w-6 h-6 rounded-full object-cover object-top flex-shrink-0" />
+            ) : (
+              <div className="w-6 h-6 rounded-full bg-zinc-700 flex items-center justify-center text-zinc-400 font-bold text-[10px]">
+                {dataB?.person.displayName[0]}
+              </div>
+            )}
+            <span className="text-sm font-semibold text-white">{dataB?.person.displayName ?? b}</span>
+            {a && (
+              <Link href={`/compare?a=${a}`} className="text-zinc-500 hover:text-blue-400 ml-1 transition-colors" title="Remove">×</Link>
+            )}
+          </div>
+
+          {/* Swap */}
           {a && b && (
             <Link
               href={`/compare?a=${b}&b=${a}`}
-              className="text-xs text-zinc-500 hover:text-zinc-300 border border-zinc-800 rounded-lg px-3 py-1.5 transition-colors"
+              className="text-xs text-zinc-500 hover:text-zinc-300 border border-zinc-800 rounded-full px-3 py-1.5 transition-colors"
             >
               Swap ↔
-            </Link>
-          )}
-          {a && (
-            <Link
-              href={`/compare?a=${a}`}
-              className="text-xs text-zinc-500 hover:text-zinc-300 border border-zinc-800 rounded-lg px-3 py-1.5 transition-colors"
-            >
-              Change B
             </Link>
           )}
         </div>
       </div>
 
-      {/* Side-by-side cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
-        {dataA
-          ? <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-6"><PersonCard data={dataA} /></div>
-          : <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-6 text-center py-12 text-zinc-500">Not found: {a}</div>
-        }
-        {dataB
-          ? <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-6"><PersonCard data={dataB} /></div>
-          : <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-6 text-center py-12 text-zinc-500">Not found: {b}</div>
-        }
+      {/* Side-by-side person cards */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        {[
+          { data: dataA, accent: 'border-red-600/30', fallbackQid: a },
+          { data: dataB, accent: 'border-blue-600/30', fallbackQid: b },
+        ].map(({ data, accent, fallbackQid }, idx) => (
+          <div key={idx} className={`bg-zinc-900 border ${accent} rounded-2xl p-6 flex flex-col items-center gap-4`}>
+            {data ? (
+              <>
+                {data.person.photoUrl ? (
+                  <img
+                    src={data.person.photoUrl}
+                    alt={data.person.displayName}
+                    className="w-20 h-20 rounded-full object-cover object-top border-4 border-zinc-800"
+                  />
+                ) : (
+                  <div className="w-20 h-20 rounded-full bg-zinc-700 border-4 border-zinc-800 flex items-center justify-center text-zinc-300 font-black text-3xl">
+                    {data.person.displayName.charAt(0)}
+                  </div>
+                )}
+                <div className="text-center">
+                  <Link href={`/people/${data.person.wikidataQid}`}
+                    className="font-black text-lg text-white hover:text-red-400 transition-colors">
+                    {data.person.displayName}
+                  </Link>
+                  {data.person.occupationSummary && (
+                    <p className="text-zinc-500 text-xs capitalize mt-0.5">
+                      {data.person.occupationSummary.replace(/_/g, ' ')}
+                    </p>
+                  )}
+                </div>
+                {data.latestScore && (
+                  <div className="grid grid-cols-2 gap-2 w-full">
+                    <div className="bg-zinc-950 rounded-xl p-3 text-center border border-zinc-800">
+                      <div className="text-2xl font-black text-amber-400">{formatScore(data.latestScore.popularityScore)}</div>
+                      <div className="text-xs text-zinc-500 mt-0.5">Popularity</div>
+                    </div>
+                    <div className="bg-zinc-950 rounded-xl p-3 text-center border border-zinc-800">
+                      <div className="text-2xl font-black text-orange-400">{formatScore(data.latestScore.heatScore)}</div>
+                      <div className="text-xs text-zinc-500 mt-0.5">Heat</div>
+                    </div>
+                  </div>
+                )}
+              </>
+            ) : (
+              <p className="text-zinc-500 text-sm py-8">Not found: {fallbackQid}</p>
+            )}
+          </div>
+        ))}
       </div>
 
       {/* Score comparison table */}
@@ -204,9 +232,9 @@ export default async function ComparePage({ searchParams }: PageProps) {
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-zinc-800 text-xs text-zinc-600 uppercase tracking-wide">
-                <th className="py-3 pl-6 text-left">Metric</th>
+                <th className="py-3 pl-6 text-left w-32">Metric</th>
                 <th className="py-3 pr-2 text-right">{dataA.person.displayName.split(' ')[0]}</th>
-                <th className="py-3 px-4 text-center">diff</th>
+                <th className="py-3 px-4 text-center w-12">diff</th>
                 <th className="py-3 pl-2 pr-6 text-left">{dataB.person.displayName.split(' ')[0]}</th>
               </tr>
             </thead>
@@ -215,43 +243,52 @@ export default async function ComparePage({ searchParams }: PageProps) {
                 const sA = dataA.latestScore![key];
                 const sB = dataB.latestScore![key];
                 return (
-                  <tr key={key}>
+                  <tr key={key} className="hover:bg-zinc-800/30 transition-colors">
                     <td className="py-3 pl-6 text-zinc-500">{label}</td>
                     <td className="py-3 pr-2 text-right">
-                      <span className={`font-bold ${color}`}>{formatScore(sA)}</span>
-                      <span className="ml-2"><WinIndicator aScore={sA} bScore={sB} /></span>
+                      <div className="inline-flex items-center gap-2">
+                        <WinIndicator aScore={sA} bScore={sB} />
+                        <span className={`font-bold text-base ${color}`}>{formatScore(sA)}</span>
+                      </div>
                     </td>
-                    <td className="py-3 px-4 text-center text-zinc-700 text-xs tabular-nums">
+                    <td className="py-3 px-4 text-center text-zinc-600 text-xs tabular-nums">
                       {Math.abs(sA - sB).toFixed(1)}
                     </td>
                     <td className="py-3 pl-2 pr-6">
-                      <span className={`font-bold ${color}`}>{formatScore(sB)}</span>
-                      <span className="ml-2"><WinIndicator aScore={sB} bScore={sA} /></span>
+                      <div className="inline-flex items-center gap-2">
+                        <span className={`font-bold text-base ${color}`}>{formatScore(sB)}</span>
+                        <WinIndicator aScore={sB} bScore={sA} />
+                      </div>
                     </td>
                   </tr>
                 );
               })}
             </tbody>
           </table>
-          <div className="px-6 py-3 text-xs text-zinc-700 border-t border-zinc-800">
-            Scores as of {formatDate(dataA.latestScore.calculatedAt)} · {formatDate(dataB.latestScore.calculatedAt)}
+          <div className="px-6 py-3 text-xs text-zinc-700 border-t border-zinc-800 flex items-center justify-between">
+            <span>Scores as of {formatDate(dataA.latestScore.calculatedAt)}</span>
+            {a && b && (
+              <Link href={`/compare?a=${a}`} className="text-zinc-600 hover:text-zinc-400 transition-colors">
+                Change person B
+              </Link>
+            )}
           </div>
         </div>
       )}
 
       {/* Top signals */}
       {(explanationA?.top_contributors || explanationB?.top_contributors) && (
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           {([
-            { exp: explanationA, name: dataA?.person.displayName },
-            { exp: explanationB, name: dataB?.person.displayName },
-          ] as const).map(({ exp, name }) =>
+            { exp: explanationA, name: dataA?.person.displayName, color: 'text-red-400' },
+            { exp: explanationB, name: dataB?.person.displayName, color: 'text-blue-400' },
+          ] as const).map(({ exp, name, color }) =>
             exp?.top_contributors ? (
               <div key={name} className="bg-zinc-900 border border-zinc-800 rounded-2xl p-5 space-y-3">
-                <h3 className="font-bold text-white text-sm">{name} — Top Signals</h3>
+                <h3 className={`font-bold text-sm ${color}`}>{name} — Top Signals</h3>
                 <div className="space-y-2">
-                  {exp.top_contributors.slice(0, 4).map((c, i) => (
-                    <div key={i} className="flex items-center justify-between text-xs border-b border-zinc-800/60 pb-1.5">
+                  {exp.top_contributors.slice(0, 5).map((c, i) => (
+                    <div key={i} className="flex items-center justify-between text-xs border-b border-zinc-800/60 pb-1.5 last:border-0">
                       <span className="text-zinc-400 capitalize">{c.signal.replace(/_/g, ' ')}</span>
                       <span className={`font-mono ${parseFloat(c.impact) >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
                         {c.impact}
@@ -268,16 +305,13 @@ export default async function ComparePage({ searchParams }: PageProps) {
       {/* Coverage */}
       {(explanationA?.coverage_label || explanationB?.coverage_label) && (
         <div className="grid grid-cols-2 gap-4 text-center">
-          <div>
-            <span className={`inline-block px-3 py-1 rounded-full text-xs border ${coverageBadgeColor(explanationA?.coverage_label ?? 'Partial coverage')}`}>
-              {explanationA?.coverage_label ?? 'Unknown coverage'}
-            </span>
-          </div>
-          <div>
-            <span className={`inline-block px-3 py-1 rounded-full text-xs border ${coverageBadgeColor(explanationB?.coverage_label ?? 'Partial coverage')}`}>
-              {explanationB?.coverage_label ?? 'Unknown coverage'}
-            </span>
-          </div>
+          {[explanationA, explanationB].map((exp, i) => (
+            <div key={i}>
+              <span className={`inline-block px-3 py-1 rounded-full text-xs border ${coverageBadgeColor(exp?.coverage_label ?? 'Partial coverage')}`}>
+                {exp?.coverage_label ?? 'Unknown coverage'}
+              </span>
+            </div>
+          ))}
         </div>
       )}
     </div>
