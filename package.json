@@ -21,7 +21,8 @@
     "bulk:import": "pnpm --filter @pai/worker bulk:import",
     "bulk:import:1m": "pnpm --filter @pai/worker bulk:import:1m",
     "bulk:import:wp": "pnpm --filter @pai/worker bulk:import:wp",
-    "update:trending": "pnpm --filter @pai/worker update:trending"
+    "update:trending": "pnpm --filter @pai/worker update:trending",
+    "bulk:seed": "pnpm --filter @pai/worker bulk:seed"
   },
   "devDependencies": {
     "@typescript-eslint/eslint-plugin": "^8.33.0",

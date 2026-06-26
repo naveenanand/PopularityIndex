@@ -84,8 +84,8 @@ function BioFactsContent({ facts }: { facts: PersonBioFacts }) {
   if (facts.employers.length > 0) {
     rows.push(<FactRow key="employer" icon="🏢" label="Employer" value={<Pills items={facts.employers} />} />);
   }
-  if (facts.ownerOf.length > 0) {
-    rows.push(<FactRow key="ownerOf" icon="💼" label="Companies" value={<Pills items={facts.ownerOf} />} />);
+  if (facts.companies.length > 0) {
+    rows.push(<FactRow key="companies" icon="💼" label="Companies" value={<Pills items={facts.companies} />} />);
   }
 
   // Fun fact — prefer notable work, fall back to award
@@ -112,7 +112,7 @@ export async function BioFactsSection({ wikidataQid }: Props) {
     facts.countrySport ||
     facts.parties.length > 0 ||
     facts.employers.length > 0 ||
-    facts.ownerOf.length > 0 ||
+    facts.companies.length > 0 ||
     facts.knownFor ||
     facts.notableAward;
 
@@ -138,7 +138,7 @@ export async function BioFactsCompact({ wikidataQid }: Props) {
   if (facts.parties.length > 0) items.push(facts.parties[0]!);
   if (facts.teams.length > 0) items.push(facts.teams[0]!);
   if (facts.employers.length > 0) items.push(facts.employers[0]!);
-  if (facts.ownerOf.length > 0) items.push(facts.ownerOf.slice(0, 2).join(', '));
+  if (facts.companies.length > 0) items.push(facts.companies.slice(0, 2).join(', '));
 
   if (items.length === 0) return null;
 
