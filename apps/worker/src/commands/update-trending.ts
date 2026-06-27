@@ -66,61 +66,7 @@ async function fetchWikipediaTop(year: string, month: string, day: string): Prom
   }
 }
 
-// Fetch hourly views for a specific Wikipedia article using the per-article endpoint.
-// This endpoint is always available and has no meaningful lag, unlike top-articles/hourly.
-async function fetchPersonHourlyViews(title: string, startHour: string, endHour: string): Promise<number> {
-  const encoded = encodeURIComponent(title);
-  const url = `https://wikimedia.org/api/rest_v1/metrics/pageviews/per-article/en.wikipedia.org/all-access/user/${encoded}/hourly/${startHour}/${endHour}`;
-  try {
-    const res = await fetch(url, {
-      headers: { 'User-Agent': UA },
-      signal: AbortSignal.timeout(8_000),
-    });
-    if (!res.ok) return 0;
-    const data = await res.json() as { items?: Array<{ views: number }> };
-    return (data.items ?? []).reduce((sum, item) => sum + item.views, 0);
-  } catch {
-    return 0;
-  }
-}
-
-// Query the last 2 complete UTC hours for all tracked people in parallel batches.
-// Returns only people with non-zero views, sorted by views descending.
-async function fetchAllPersonHourlyViews(
-  people: ScoredPerson[],
-): Promise<Array<{ person: ScoredPerson; views: number }>> {
-  const now = new Date();
-  const pad = (n: number) => String(n).padStart(2, '0');
-  const fmt = (d: Date) =>
-    `${d.getUTCFullYear()}${pad(d.getUTCMonth() + 1)}${pad(d.getUTCDate())}${pad(d.getUTCHours())}`;
-
-  const end = new Date(now);
-  end.setUTCHours(end.getUTCHours() - 1);   // last complete hour
-  const start = new Date(end);
-  start.setUTCHours(start.getUTCHours() - 1); // one hour before that
-
-  const startStr = fmt(start);
-  const endStr   = fmt(end);
-  console.log(`\n[1h] Querying per-article views ${startStr}–${endStr} for ${people.length} people...`);
-
-  const results: Array<{ person: ScoredPerson; views: number }> = [];
-  const CONCURRENCY = 10;
-
-  for (let i = 0; i < people.length; i += CONCURRENCY) {
-    const batch = people.slice(i, i + CONCURRENCY);
-    const batchResults = await Promise.all(batch.map(async p => {
-      const title = p.displayName.replace(/ /g, '_');
-      const views = await fetchPersonHourlyViews(title, startStr, endStr);
-      return { person: p, views };
-    }));
-    results.push(...batchResults);
-    if (i + CONCURRENCY < people.length) await delay(150);
-  }
-
-  const matched = results.filter(r => r.views > 0);
-  console.log(`  → ${matched.length} people with views in this window`);
-  return matched;
-}
+// (1h is handled by the Vercel cron via Google News RSS — removed from worker)
 
 /**
  * Compute live heat from real-time activity — mirrors the cron formula.
@@ -333,33 +279,10 @@ async function autoDiscoverPeople(
   return added;
 }
 
-// --- trending:1h (per-article Wikipedia hourly views) ---
-// Query each tracked person directly using the per-article endpoint.
-// This is always available — no lag issues like the top-articles hourly endpoint.
-const hourlyData = await fetchAllPersonHourlyViews(scoredPeople);
-
-const trending1h = hourlyData
-  .map(({ person: p, views }) => makeTrendingEntry(p, 0, views, views, '1h'))
-  .sort((a, b) => b.trendingScore - a.trendingScore)
-  .slice(0, 50)
-  .map((e, i) => ({ ...e, rank: i + 1 }));
-
-const trending1hFinal = trending1h.length > 0
-  ? trending1h
-  : scoredPeople
-      .filter(p => p.heatScore > 0)
-      .sort((a, b) => b.heatScore - a.heatScore)
-      .slice(0, 50)
-      .map((p, i) => makeTrendingEntry(p, i, p.heatScore, 0, '1h'));
-
-await db
-  .insert(cacheEntries)
-  .values({ key: 'trending:1h', data: trending1hFinal, updatedAt: new Date() })
-  .onConflictDoUpdate({
-    target: cacheEntries.key,
-    set: { data: trending1hFinal, updatedAt: new Date() },
-  });
-console.log(`[1h] Stored ${trending1hFinal.length} entries (${hourlyData.length} from Wikipedia per-article)`);
+// trending:1h is owned by the Vercel cron (Google News RSS).
+// This worker runs on GitHub Actions where Wikimedia IPs are rate-limited,
+// so we skip 1h entirely to avoid overwriting the Vercel cron's data.
+console.log('\n[1h] Skipped — managed by Vercel cron (Google News RSS)');
 
 await delay(2_000);
 
@@ -449,48 +372,6 @@ await db
     set: { data: newsFeed, updatedAt: new Date() },
   });
 console.log(`\n[news_feed] Stored ${newsFeed.length} entries`);
-
-// --- Heat score updates for people with big Wikipedia view spikes ---
-// Boost heat score for anyone with very high hourly views (> 10k).
-const heatUpdates: Array<{ name: string; oldHeat: number; newHeat: number }> = [];
-for (const { person, views } of hourlyData) {
-  if (views < 10_000) continue;
-
-  const newsBoost = Math.min(40, Math.log1p(views / 1000) * 8);
-  const newHeat = Math.min(100, person.heatScore + newsBoost);
-  if (newHeat - person.heatScore < 3) continue;
-
-  await db.insert(scoreSnapshots).values({
-    personId: person.personId,
-    calculatedAt: new Date(),
-    scoreModelVersion: `${person.scoreModelVersion}-wiki`,
-    popularityScore: person.popularityScore,
-    heatScore: newHeat,
-    coverageScore: person.coverageScore,
-    confidenceScore: person.confidenceScore,
-    sentimentScore: null,
-    controversyScore: null,
-    explanationJson: {
-      score_model_version: `${person.scoreModelVersion}-wiki`,
-      popularity_score: person.popularityScore,
-      heat_score: newHeat,
-      coverage_score: person.coverageScore,
-      wikipedia_views_1h: views,
-      heat_boost_from_views: newsBoost,
-      top_contributors: [
-        { signal: 'wikipedia_views_1h', impact: `+${newsBoost.toFixed(1)}`, reason: `${views.toLocaleString()} Wikipedia views in the last hour` },
-      ],
-    },
-  });
-  heatUpdates.push({ name: person.displayName, oldHeat: person.heatScore, newHeat });
-}
-
-if (heatUpdates.length > 0) {
-  console.log(`\n[heat] Updated ${heatUpdates.length} people from Wikipedia spikes:`);
-  for (const u of heatUpdates) {
-    console.log(`  ${u.name}: ${u.oldHeat.toFixed(1)} → ${u.newHeat.toFixed(1)}`);
-  }
-}
 
 // Auto-discover: add new people from daily Wikipedia trending
 const allArticlesForDiscovery = dailyArticles;
