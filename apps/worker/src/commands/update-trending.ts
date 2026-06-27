@@ -66,61 +66,7 @@ async function fetchWikipediaTop(year: string, month: string, day: string): Prom
   }
 }
 
-// Fetch hourly views for a specific Wikipedia article using the per-article endpoint.
-// This endpoint is always available and has no meaningful lag, unlike top-articles/hourly.
-async function fetchPersonHourlyViews(title: string, startHour: string, endHour: string): Promise<number> {
-  const encoded = encodeURIComponent(title);
-  const url = `https://wikimedia.org/api/rest_v1/metrics/pageviews/per-article/en.wikipedia.org/all-access/user/${encoded}/hourly/${startHour}/${endHour}`;
-  try {
-    const res = await fetch(url, {
-      headers: { 'User-Agent': UA },
-      signal: AbortSignal.timeout(8_000),
-    });
-    if (!res.ok) return 0;
-    const data = await res.json() as { items?: Array<{ views: number }> };
-    return (data.items ?? []).reduce((sum, item) => sum + item.views, 0);
-  } catch {
-    return 0;
-  }
-}
-
-// Query the last 2 complete UTC hours for all tracked people in parallel batches.
-// Returns only people with non-zero views, sorted by views descending.
-async function fetchAllPersonHourlyViews(
-  people: ScoredPerson[],
-): Promise<Array<{ person: ScoredPerson; views: number }>> {
-  const now = new Date();
-  const pad = (n: number) => String(n).padStart(2, '0');
-  const fmt = (d: Date) =>
-    `${d.getUTCFullYear()}${pad(d.getUTCMonth() + 1)}${pad(d.getUTCDate())}${pad(d.getUTCHours())}`;
-
-  const end = new Date(now);
-  end.setUTCHours(end.getUTCHours() - 1);   // last complete hour
-  const start = new Date(end);
-  start.setUTCHours(start.getUTCHours() - 1); // one hour before that
-
-  const startStr = fmt(start);
-  const endStr   = fmt(end);
-  console.log(`\n[1h] Querying per-article views ${startStr}–${endStr} for ${people.length} people...`);
-
-  const results: Array<{ person: ScoredPerson; views: number }> = [];
-  const CONCURRENCY = 10;
-
-  for (let i = 0; i < people.length; i += CONCURRENCY) {
-    const batch = people.slice(i, i + CONCURRENCY);
-    const batchResults = await Promise.all(batch.map(async p => {
-      const title = p.displayName.replace(/ /g, '_');
-      const views = await fetchPersonHourlyViews(title, startStr, endStr);
-      return { person: p, views };
-    }));
-    results.push(...batchResults);
-    if (i + CONCURRENCY < people.length) await delay(150);
-  }
-
-  const matched = results.filter(r => r.views > 0);
-  console.log(`  → ${matched.length} people with views in this window`);
-  return matched;
-}
+// (1h is handled by the Vercel cron via Google News RSS — removed from worker)
 
 /**
  * Compute live heat from real-time activity — mirrors the cron formula.
