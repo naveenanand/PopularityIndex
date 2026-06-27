@@ -87,6 +87,7 @@ export interface ViewPerson {
   occupationSummary?: string | null;
   rank: number;
   primaryScore: number;
+  primaryScoreDisplay?: string | undefined;
   primaryLabel: string;
   primaryColor: string;
   secondaryScore?: number;

@@ -28,9 +28,19 @@ const PERIOD_LABEL: Record<string, string> = {
 
 const ACTIVITY_LABEL: Record<string, string> = {
   '1h':  'News Articles',
-  '24h': 'News Articles',
-  '30d': 'News Articles',
+  '24h': 'Wiki Views',
+  '30d': 'Mo. Views',
 };
+
+function fmtCount(n: number, timespan: string): string {
+  if (timespan === '30d') {
+    if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+    if (n >= 1_000)     return `${Math.round(n / 1_000)}K`;
+    return n.toString();
+  }
+  if (timespan === '1h' && n > 999) return `${(n / 1_000).toFixed(0)}K`;
+  return n.toString();
+}
 
 interface Props {
   entries: TrendingEntry[];
@@ -90,9 +100,7 @@ export function TrendingTable({ entries, timespan }: Props) {
               </td>
               <td className="py-3 pr-4 text-right">
                 <span className="text-lg font-bold text-red-400">
-                  {timespan === '1h' && entry.articleCount > 999
-                    ? `${(entry.articleCount / 1000).toFixed(0)}K`
-                    : entry.articleCount}
+                  {fmtCount(entry.articleCount, timespan)}
                 </span>
               </td>
               <td className="py-3 pr-5 text-right">
@@ -109,7 +117,7 @@ export function TrendingTable({ entries, timespan }: Props) {
         </tbody>
       </table>
       <p className="text-[10px] text-zinc-700 px-5 py-3">
-        Source: {timespan === '1h' ? 'Google News RSS (last 75 min)' : 'GDELT news index'} · {active.length} people trending in {PERIOD_LABEL[timespan]}
+        Source: {timespan === '1h' ? 'Google News RSS (last 75 min)' : timespan === '30d' ? 'Wikipedia monthly pageviews' : 'Wikipedia daily pageviews'} · {active.length} people trending in {PERIOD_LABEL[timespan]}
       </p>
     </div>
   );

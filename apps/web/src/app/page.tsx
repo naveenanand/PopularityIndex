@@ -61,15 +61,25 @@ function leaderboardToView(entry: LeaderboardEntry, sort: 'popularity' | 'heat')
   };
 }
 
+function fmtViews(n: number): string {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+  if (n >= 1_000)     return `${Math.round(n / 1_000)}K`;
+  return n.toString();
+}
+
 function trendingToView(entry: TrendingEntry, rank: number, sortKey: SortKey): ViewPerson {
-  // 30d: no per-person view count is meaningful — use heat score
-  // 1h/24h: articleCount stores Wikipedia page views; fall back to heat score when
-  //         the Wikipedia hourly endpoint has a lag and returns nothing (articleCount === 0)
-  const use30d = sortKey === 'trending_30d';
+  const use30d   = sortKey === 'trending_30d';
   const hasViews = !use30d && entry.articleCount > 0;
-  const primaryScore  = use30d ? Math.round(entry.heatScore) : (hasViews ? entry.articleCount : Math.round(entry.heatScore));
-  const primaryLabel  = use30d ? 'Heat' : (hasViews ? 'Wiki Views' : 'Heat');
-  const primaryColor  = (use30d || !hasViews) ? 'text-orange-400' : 'text-red-400';
+  const has30dViews = use30d && entry.articleCount > 0;
+
+  const primaryScore        = has30dViews ? entry.articleCount
+                            : hasViews    ? entry.articleCount
+                            : Math.round(entry.heatScore);
+  const primaryScoreDisplay = has30dViews ? fmtViews(entry.articleCount) : undefined;
+  const primaryLabel        = has30dViews ? 'Mo. Views'
+                            : hasViews    ? 'Wiki Views'
+                            : 'Heat';
+  const primaryColor        = (has30dViews || hasViews) ? 'text-red-400' : 'text-orange-400';
 
   return {
     wikidataQid: entry.wikidataQid,
@@ -78,6 +88,7 @@ function trendingToView(entry: TrendingEntry, rank: number, sortKey: SortKey): V
     occupationSummary: entry.occupationSummary,
     rank,
     primaryScore,
+    primaryScoreDisplay,
     primaryLabel,
     primaryColor,
     secondaryScore: Math.round(entry.popularityScore),
