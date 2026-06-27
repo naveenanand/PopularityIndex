@@ -101,8 +101,8 @@ const remaining = allRows.filter(r => !patternMatchQids.has(r.wikidataQid));
 console.log(`\n[purge] Pass 2: Wikidata verification for ${remaining.length.toLocaleString()} remaining people...`);
 console.log('  (checking P31=Q5 "instance of human" in batches of 100)');
 
-const BATCH = 100;
-const DELAY_MS = 400;
+const BATCH = 50;   // smaller batches = less likely to hit query complexity limits
+const DELAY_MS = 600; // 600ms between requests to stay under Wikidata rate limits
 const nonHumanQids: string[] = [];
 
 function delay(ms: number) { return new Promise<void>(r => setTimeout(r, ms)); }
@@ -115,13 +115,18 @@ async function checkHumanBatch(qids: string[]): Promise<Set<string>> {
       `https://query.wikidata.org/sparql?query=${encodeURIComponent(sparql)}&format=json`,
       { headers: { 'User-Agent': UA, Accept: 'application/sparql-results+json' }, signal: AbortSignal.timeout(20_000) },
     );
-    if (!res.ok) return new Set(qids); // assume human on error to avoid false deletes
+    if (!res.ok) return new Set(qids); // assume all human on HTTP error
     const json = await res.json() as { results: { bindings: Array<{ person: { value: string } }> } };
-    return new Set(
+    const humanSet = new Set(
       json.results.bindings.map(b => b.person.value.replace('http://www.wikidata.org/entity/', '')),
     );
+    // Wikidata rate-limits return HTTP 200 with 0 bindings rather than a 429.
+    // If the entire batch comes back empty, that's almost certainly a rate-limit
+    // silent failure — treat it as "all human" to avoid false deletions.
+    if (humanSet.size === 0) return new Set(qids);
+    return humanSet;
   } catch {
-    return new Set(qids); // assume human on timeout
+    return new Set(qids); // assume all human on timeout
   }
 }
 
