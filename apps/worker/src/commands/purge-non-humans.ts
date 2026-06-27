@@ -21,7 +21,7 @@
 import { findUp } from 'find-up';
 import { config } from 'dotenv';
 import { getDb, people } from '@pai/db';
-import { inArray, sql } from 'drizzle-orm';
+import { inArray } from 'drizzle-orm';
 
 const envPath = await findUp('.env');
 if (envPath) config({ path: envPath });
