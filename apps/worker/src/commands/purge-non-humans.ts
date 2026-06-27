@@ -107,26 +107,35 @@ const nonHumanQids: string[] = [];
 
 function delay(ms: number) { return new Promise<void>(r => setTimeout(r, ms)); }
 
+// Use the MediaWiki wbgetentities API instead of SPARQL — more reliable for batch
+// QID lookups and less prone to silent empty-result rate-limit responses.
 async function checkHumanBatch(qids: string[]): Promise<Set<string>> {
-  const values = qids.map(q => `wd:${q}`).join(' ');
-  const sparql = `SELECT ?person WHERE { VALUES ?person { ${values} } ?person wdt:P31 wd:Q5 . }`;
+  const url = `https://www.wikidata.org/w/api.php?action=wbgetentities&ids=${qids.join('|')}&props=claims&format=json&formatversion=2`;
   try {
-    const res = await fetch(
-      `https://query.wikidata.org/sparql?query=${encodeURIComponent(sparql)}&format=json`,
-      { headers: { 'User-Agent': UA, Accept: 'application/sparql-results+json' }, signal: AbortSignal.timeout(20_000) },
-    );
-    if (!res.ok) return new Set(qids); // assume all human on HTTP error
-    const json = await res.json() as { results: { bindings: Array<{ person: { value: string } }> } };
-    const humanSet = new Set(
-      json.results.bindings.map(b => b.person.value.replace('http://www.wikidata.org/entity/', '')),
-    );
-    // Wikidata rate-limits return HTTP 200 with 0 bindings rather than a 429.
-    // If the entire batch comes back empty, that's almost certainly a rate-limit
-    // silent failure — treat it as "all human" to avoid false deletions.
-    if (humanSet.size === 0) return new Set(qids);
+    const res = await fetch(url, {
+      headers: { 'User-Agent': UA },
+      signal: AbortSignal.timeout(20_000),
+    });
+    if (!res.ok) return new Set(qids); // assume all human on error
+    const json = await res.json() as {
+      entities: Record<string, {
+        missing?: boolean;
+        claims?: { P31?: Array<{ mainsnak: { datavalue?: { value: { id: string } } } }> };
+      }>
+    };
+    const humanSet = new Set<string>();
+    for (const [qid, entity] of Object.entries(json.entities)) {
+      if (entity.missing) continue; // deleted/merged item — skip
+      const p31 = entity.claims?.P31 ?? [];
+      const isHuman = p31.some(c => c.mainsnak?.datavalue?.value?.id === 'Q5');
+      if (isHuman) humanSet.add(qid);
+    }
+    // If we got back 0 humans from a non-empty batch, treat as API failure to
+    // avoid deleting real humans due to transient errors.
+    if (humanSet.size === 0 && qids.length > 0) return new Set(qids);
     return humanSet;
   } catch {
-    return new Set(qids); // assume all human on timeout
+    return new Set(qids); // assume all human on timeout/error
   }
 }
 
