@@ -8,7 +8,7 @@
  * Strategy:
  *   trending:1h  → top Wikipedia articles for the current hour
  *   trending:24h → top Wikipedia articles for today
- *   trending:30d → scored people ranked by their stored heatScore
+ *   trending:30d → top Wikipedia articles for the current month (monthly endpoint)
  *
  * If Wikipedia API is unavailable, all tabs fall back to heatScore ranking.
  */
@@ -66,18 +66,46 @@ async function fetchWikipediaTop(year: string, month: string, day: string): Prom
   }
 }
 
+// Fetch Wikipedia monthly top articles (used for 30d trending)
+// Returns top 1000 articles with cumulative views for the whole month.
+async function fetchWikipediaTopMonthly(year: string, month: string): Promise<WikipediaTopArticle[]> {
+  const path = `metrics/pageviews/top/en.wikipedia.org/all-access/${year}/${month}/all-days`;
+  const url = `https://wikimedia.org/api/rest_v1/${path}`;
+  try {
+    const res = await fetch(url, {
+      headers: { 'User-Agent': UA },
+      signal: AbortSignal.timeout(15_000),
+    });
+    if (!res.ok) {
+      console.log(`  Wikipedia API ${res.status} for ${path}`);
+      return [];
+    }
+    const data = await res.json() as { items?: Array<{ articles: WikipediaTopArticle[] }> };
+    const articles = data.items?.[0]?.articles ?? [];
+    console.log(`  Wikipedia API 200 for ${path} → ${articles.length} articles`);
+    return articles;
+  } catch (err) {
+    console.log(`  Wikipedia API error for ${path}:`, err);
+    return [];
+  }
+}
+
 // (1h is handled by the Vercel cron via Google News RSS — removed from worker)
 
 /**
- * Compute live heat from real-time activity — mirrors the cron formula.
- * 1h (Wikipedia views): log10 scale, 1K→50, 10K→67, 100K→83, 1M→100
- * 24h/30d (Wikipedia views — larger absolute numbers than GDELT): same log10 scale
+ * Compute live heat from real-time activity.
+ * 1h  — anchored at 1M views   (log10 scale / 6)
+ * 24h — anchored at 5M views   (top daily Wikipedia article ~2-5M)
+ * 30d — anchored at 150M views (top monthly ~5M/day × 30)
  */
 function computeLiveHeat(timespan: string, metricValue: number): number {
   if (timespan === '1h') {
     return Math.min(100, (Math.log10(Math.max(1, metricValue)) / 6) * 100);
   }
-  // 24h daily views are much larger — anchor at log10 of typical daily max (~5M)
+  if (timespan === '30d') {
+    return Math.min(100, (Math.log10(Math.max(1, metricValue)) / Math.log10(150_000_000)) * 100);
+  }
+  // 24h
   return Math.min(100, (Math.log10(Math.max(1, metricValue)) / Math.log10(5_000_000)) * 100);
 }
 
@@ -334,13 +362,41 @@ console.log(`[24h] Stored ${trending24hFinal.length} entries (${dailyMatches.len
 
 await delay(2_000);
 
-// --- trending:30d (heatScore ranking — most stable, updated by score:calculate) ---
-console.log('\n[30d] Building from heatScore rankings...');
-const trending30d = scoredPeople
-  .filter(p => p.heatScore > 0)
-  .sort((a, b) => b.heatScore - a.heatScore)
+// --- trending:30d (Wikipedia monthly top articles) ---
+console.log('\n[30d] Fetching Wikipedia top articles for this month...');
+// Try current month; fall back to previous month if current month isn't published yet.
+let monthlyArticles = await fetchWikipediaTopMonthly(year, month);
+if (monthlyArticles.length === 0) {
+  const prevMonth = new Date(now);
+  prevMonth.setUTCMonth(prevMonth.getUTCMonth() - 1);
+  monthlyArticles = await fetchWikipediaTopMonthly(
+    prevMonth.getUTCFullYear().toString(),
+    String(prevMonth.getUTCMonth() + 1).padStart(2, '0'),
+  );
+}
+console.log(`  → ${monthlyArticles.length} monthly Wikipedia articles`);
+
+const monthlyMatches = monthlyArticles
+  .filter(a => isPersonArticle(a.article))
+  .filter(a => titleToPerson.has(a.article));
+
+const trending30dFromWiki = monthlyMatches
+  .map(a => {
+    const p = titleToPerson.get(a.article)!;
+    return makeTrendingEntry(p, 0, a.views, a.views, '30d');
+  })
+  .sort((a, b) => b.liveHeat - a.liveHeat)
   .slice(0, 50)
-  .map((p, i) => makeTrendingEntry(p, i, p.heatScore, 0, '30d'));
+  .map((e, i) => ({ ...e, rank: i + 1 }));
+
+// Fall back to heatScore ranking if Wikipedia monthly data is unavailable.
+const trending30d = trending30dFromWiki.length > 0
+  ? trending30dFromWiki
+  : scoredPeople
+      .filter(p => p.heatScore > 0)
+      .sort((a, b) => b.heatScore - a.heatScore)
+      .slice(0, 50)
+      .map((p, i) => makeTrendingEntry(p, i, p.heatScore, 0, '30d'));
 
 await db
   .insert(cacheEntries)
@@ -349,7 +405,7 @@ await db
     target: cacheEntries.key,
     set: { data: trending30d, updatedAt: new Date() },
   });
-console.log(`[30d] Stored ${trending30d.length} entries`);
+console.log(`[30d] Stored ${trending30d.length} entries (${monthlyMatches.length} from Wikipedia monthly)`);
 
 // --- news_feed (top articles mentioning our known people, from daily Wikipedia matches) ---
 const newsFeed = dailyMatches.slice(0, 20).map(a => {
