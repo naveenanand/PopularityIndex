@@ -43,7 +43,7 @@ interface ScoredPerson {
   heatScore: number;
   coverageScore: number;
   scoreModelVersion: string;
-  calculatedAt: Date;
+  calculatedAt: Date | null;
 }
 
 
@@ -157,7 +157,13 @@ export async function GET(request: Request) {
   const conn = await db();
   if (!conn) return NextResponse.json({ error: 'No DB' }, { status: 500 });
 
-  // Get top 100 scored people (most likely to be in news)
+  // Load up to 1000 people for Google News RSS queries.
+  // 1h queries Google News per-person; at 10 concurrent + 300ms delay the
+  // Vercel 5-min budget fits ~1000 people safely.
+  // LEFT JOIN so bulk-seeded people without scores are included.
+  // Order: scored people first (by popularityScore), then unscored stubs by
+  // insertion order (bulk-seed inserts by Wikidata sitelink count, so lower id
+  // = more globally notable).
   const latestScores = conn
     .select({
       personId: scoreSnapshots.personId,
@@ -173,26 +179,26 @@ export async function GET(request: Request) {
       displayName: people.displayName,
       photoUrl: people.photoUrl,
       occupationSummary: people.occupationSummary,
-      popularityScore: scoreSnapshots.popularityScore,
-      heatScore: scoreSnapshots.heatScore,
-      coverageScore: scoreSnapshots.coverageScore,
-      scoreModelVersion: scoreSnapshots.scoreModelVersion,
-      calculatedAt: scoreSnapshots.calculatedAt,
+      popularityScore: sql<number>`COALESCE(${scoreSnapshots.popularityScore}, 0)`,
+      heatScore:        sql<number>`COALESCE(${scoreSnapshots.heatScore}, 0)`,
+      coverageScore:    sql<number>`COALESCE(${scoreSnapshots.coverageScore}, 0)`,
+      scoreModelVersion: sql<string>`COALESCE(${scoreSnapshots.scoreModelVersion}, 'unscored')`,
+      calculatedAt:     scoreSnapshots.calculatedAt,
     })
     .from(people)
-    .innerJoin(latestScores, eq(latestScores.personId, people.id))
-    .innerJoin(
+    .leftJoin(latestScores, eq(latestScores.personId, people.id))
+    .leftJoin(
       scoreSnapshots,
       and(
         eq(scoreSnapshots.personId, people.id),
         eq(scoreSnapshots.calculatedAt, sql`${latestScores.maxCalcAt}`),
       ),
     )
-    .orderBy(desc(scoreSnapshots.popularityScore))
-    .limit(200);
+    .orderBy(desc(scoreSnapshots.popularityScore), people.id)
+    .limit(1000);
 
   if (scoredPeople.length === 0) {
-    return NextResponse.json({ ok: true, message: 'No scored people — skipped' });
+    return NextResponse.json({ ok: true, message: 'No people found — skipped' });
   }
 
   const results: Record<string, number> = {};
