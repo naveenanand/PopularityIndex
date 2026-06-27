@@ -1,18 +1,12 @@
 /**
  * Trending cron — hybrid approach:
  *
- * trending:1h  → Wikipedia hourly page views (real-time, no IP blocks).
- *                Ranked purely by view count so whoever people are ACTUALLY
- *                reading right now rises to the top regardless of fame.
- *                Wikimedia data lags ~1 hour so we try the current hour first,
- *                then fall back to the previous completed hour.
+ * trending:1h  → Google News RSS, articles published in the last 75 minutes.
+ *                Queried per-person so the ranking is purely "who is in the
+ *                news RIGHT NOW" — changes every cron run.
  *
  * trending:24h → GDELT news articles for last 24h, mild popularity tiebreak.
  * trending:30d → GDELT news articles for last 14 days, mild popularity tiebreak.
- *
- * Both GDELT timespans use a small popularity multiplier (log/20) so two people
- * with the same article count rank by established audience, but raw article
- * count still dominates.
  */
 import { NextResponse } from 'next/server';
 import { desc, eq, and, sql } from 'drizzle-orm';
@@ -54,92 +48,68 @@ interface ScoredPerson {
 
 
 /**
- * Fetch hourly Wikipedia pageviews for a specific person using the per-article
- * endpoint. Unlike the top-articles hourly endpoint (which is unreliable and
- * returns empty constantly), this endpoint is always available — it's the same
- * one used by the scoring engine for daily views.
+ * Fetch Google News RSS for a person and count articles published in the last
+ * withinMinutes. Returns article count (0 if none or on error).
  *
- * Returns total views across the two most recently completed UTC hours so that
- * the 1h tab reflects genuine recent reading activity.
+ * Google News RSS is free, requires no API key, and is not rate-limited the
+ * way Wikimedia is from cloud IPs. Each RSS feed returns ~10 recent articles
+ * with ISO pubDate timestamps — we filter to the last hour window.
  */
-async function fetchPersonHourlyViews(
-  title: string,
-  startHour: string,
-  endHour: string,
-): Promise<number> {
-  const encoded = encodeURIComponent(title);
-  const path = `metrics/pageviews/per-article/en.wikipedia.org/all-access/user/${encoded}/hourly/${startHour}/${endHour}`;
+async function fetchGoogleNews1h(name: string, withinMinutes = 75): Promise<number> {
+  const query = encodeURIComponent(`"${name}"`);
+  const url = `https://news.google.com/rss/search?q=${query}&hl=en-US&gl=US&ceid=US:en`;
   try {
-    const res = await fetch(`https://wikimedia.org/api/rest_v1/${path}`, {
+    const res = await fetch(url, {
       headers: { 'User-Agent': UA },
       signal: AbortSignal.timeout(8_000),
       cache: 'no-store',
     });
     if (!res.ok) return 0;
-    const data = await res.json() as { items?: Array<{ views: number }> };
-    return (data.items ?? []).reduce((sum, item) => sum + item.views, 0);
+    const xml = await res.text();
+    const cutoff = Date.now() - withinMinutes * 60 * 1000;
+    const pubDates = [...xml.matchAll(/<pubDate>([^<]+)<\/pubDate>/g)]
+      .slice(1) // skip channel-level pubDate
+      .map(m => new Date(m[1]!).getTime());
+    return pubDates.filter(t => t >= cutoff).length;
   } catch {
     return 0;
   }
 }
 
 /**
- * Query hourly Wikipedia views for all tracked people in parallel batches.
- * Covers the last 2 complete UTC hours so we always have data regardless of
- * Wikimedia's publication lag (which affects top-articles but not per-article).
+ * Query Google News for all tracked people in parallel batches of 10.
+ * Returns only people who had at least 1 article in the last hour.
  */
-async function fetchAllPersonHourlyViews(
+async function fetchAllGoogleNews1h(
   people: ScoredPerson[],
-): Promise<Array<{ person: ScoredPerson; views: number }>> {
-  const now = new Date();
-  const pad = (n: number) => String(n).padStart(2, '0');
-  const fmt = (d: Date) =>
-    `${d.getUTCFullYear()}${pad(d.getUTCMonth() + 1)}${pad(d.getUTCDate())}${pad(d.getUTCHours())}`;
-
-  // Last 2 complete hours (current hour is still accumulating)
-  const end = new Date(now);
-  end.setUTCHours(end.getUTCHours() - 1);
-  const start = new Date(end);
-  start.setUTCHours(start.getUTCHours() - 1);
-
-  const startStr = fmt(start);
-  const endStr   = fmt(end);
-  console.log(`[1h] Querying per-article views ${startStr}–${endStr} for ${people.length} people`);
-
-  const results: Array<{ person: ScoredPerson; views: number }> = [];
+): Promise<Array<{ person: ScoredPerson; count: number }>> {
   const CONCURRENCY = 10;
+  const results: Array<{ person: ScoredPerson; count: number }> = [];
 
+  console.log(`[1h] Querying Google News RSS for ${people.length} people...`);
   for (let i = 0; i < people.length; i += CONCURRENCY) {
     const batch = people.slice(i, i + CONCURRENCY);
-    const batchResults = await Promise.all(batch.map(async p => {
-      const title = p.displayName.replace(/ /g, '_');
-      const views = await fetchPersonHourlyViews(title, startStr, endStr);
-      return { person: p, views };
-    }));
+    const batchResults = await Promise.all(
+      batch.map(async p => ({ person: p, count: await fetchGoogleNews1h(p.displayName) })),
+    );
     results.push(...batchResults);
-    if (i + CONCURRENCY < people.length) await delay(150);
+    if (i + CONCURRENCY < people.length) await delay(300);
   }
 
-  const matched = results.filter(r => r.views > 0);
-  console.log(`[1h] ${matched.length} people had views in this window`);
+  const matched = results.filter(r => r.count > 0);
+  console.log(`[1h] ${matched.length} people with news in the last hour`);
   return matched;
 }
 
 /**
- * Compute a live heat score from real-time activity data for the current cron period.
+ * Compute live heat from real-time activity — changes every cron run.
  *
- * This deliberately ignores the stored heatScore — we want a value that genuinely
- * changes every run based on what just happened:
- *
- * 1h  (Wikipedia views): log10 scale anchored at 1M theoretical max.
- *     1K views → ~50,  10K → ~67,  100K → ~83,  1M → 100
- *
- * 24h/30d (GDELT article count): log1p scale anchored at 100 articles.
- *     1 article → 15,  5 → 37,  10 → 52,  30 → 74,  100 → 100
+ * 1h  (Google News article count): 1 article → 29, 3 → 58, 5 → 75, 10 → 100
+ * 24h/30d (GDELT article count):   1 → 15, 10 → 52, 30 → 74, 100 → 100
  */
 function computeLiveHeat(timespan: string, metricValue: number): number {
   if (timespan === '1h') {
-    return Math.min(100, (Math.log10(Math.max(1, metricValue)) / 6) * 100);
+    return Math.min(100, (Math.log1p(metricValue) / Math.log1p(10)) * 100);
   }
   return Math.min(100, (Math.log1p(metricValue) / Math.log1p(100)) * 100);
 }
@@ -227,31 +197,29 @@ export async function GET(request: Request) {
 
   const results: Record<string, number> = {};
 
-  // ── trending:1h — per-article Wikipedia hourly views ──────────────────────
-  // We query each tracked person's Wikipedia views directly using the
-  // per-article endpoint. This is always available (unlike the top-articles
-  // hourly endpoint which consistently returns empty) and gives true
-  // last-hour data — whoever is actually being read right now.
-  const hourlyData = await fetchAllPersonHourlyViews(scoredPeople);
+  // ── trending:1h — Google News RSS ─────────────────────────────────────────
+  // Count news articles published about each person in the last 75 minutes.
+  // Google News is free, no API key, and not rate-limited from cloud IPs the
+  // way Wikimedia is. The list changes every cron run based on who is actually
+  // in the news right now.
+  const gnData = await fetchAllGoogleNews1h(scoredPeople);
 
-  const trending1h = hourlyData
-    .map(({ person: p, views }) => ({
+  const trending1h = gnData
+    .map(({ person: p, count }) => ({
       rank: 0, wikidataQid: p.wikidataQid, displayName: p.displayName,
       photoUrl: p.photoUrl, occupationSummary: p.occupationSummary,
       popularityScore: p.popularityScore, heatScore: p.heatScore,
       coverageScore: p.coverageScore, coverageLabel: 'Partial coverage',
       scoreModelVersion: p.scoreModelVersion, calculatedAt: p.calculatedAt,
-      articleCount: views,
-      liveHeat: computeLiveHeat('1h', views),
-      trendingScore: views,
+      articleCount: count,
+      liveHeat: computeLiveHeat('1h', count),
+      trendingScore: count,
       trendingArticles: [] as GDELTArticle[],
     }))
-    .sort((a, b) => b.trendingScore - a.trendingScore)
+    .sort((a, b) => b.trendingScore - a.trendingScore || b.popularityScore - a.popularityScore)
     .slice(0, 50)
     .map((e, i) => ({ ...e, rank: i + 1 }));
 
-  // Only fall back to daily data (not heatScore) so the list still changes
-  // between runs even when the per-article endpoint returns nothing
   const trending1hFinal = trending1h.length > 0
     ? trending1h
     : scoredPeople

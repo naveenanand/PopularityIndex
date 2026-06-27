@@ -333,33 +333,10 @@ async function autoDiscoverPeople(
   return added;
 }
 
-// --- trending:1h (per-article Wikipedia hourly views) ---
-// Query each tracked person directly using the per-article endpoint.
-// This is always available — no lag issues like the top-articles hourly endpoint.
-const hourlyData = await fetchAllPersonHourlyViews(scoredPeople);
-
-const trending1h = hourlyData
-  .map(({ person: p, views }) => makeTrendingEntry(p, 0, views, views, '1h'))
-  .sort((a, b) => b.trendingScore - a.trendingScore)
-  .slice(0, 50)
-  .map((e, i) => ({ ...e, rank: i + 1 }));
-
-const trending1hFinal = trending1h.length > 0
-  ? trending1h
-  : scoredPeople
-      .filter(p => p.heatScore > 0)
-      .sort((a, b) => b.heatScore - a.heatScore)
-      .slice(0, 50)
-      .map((p, i) => makeTrendingEntry(p, i, p.heatScore, 0, '1h'));
-
-await db
-  .insert(cacheEntries)
-  .values({ key: 'trending:1h', data: trending1hFinal, updatedAt: new Date() })
-  .onConflictDoUpdate({
-    target: cacheEntries.key,
-    set: { data: trending1hFinal, updatedAt: new Date() },
-  });
-console.log(`[1h] Stored ${trending1hFinal.length} entries (${hourlyData.length} from Wikipedia per-article)`);
+// trending:1h is owned by the Vercel cron (Google News RSS).
+// This worker runs on GitHub Actions where Wikimedia IPs are rate-limited,
+// so we skip 1h entirely to avoid overwriting the Vercel cron's data.
+console.log('\n[1h] Skipped — managed by Vercel cron (Google News RSS)');
 
 await delay(2_000);
 
@@ -449,48 +426,6 @@ await db
     set: { data: newsFeed, updatedAt: new Date() },
   });
 console.log(`\n[news_feed] Stored ${newsFeed.length} entries`);
-
-// --- Heat score updates for people with big Wikipedia view spikes ---
-// Boost heat score for anyone with very high hourly views (> 10k).
-const heatUpdates: Array<{ name: string; oldHeat: number; newHeat: number }> = [];
-for (const { person, views } of hourlyData) {
-  if (views < 10_000) continue;
-
-  const newsBoost = Math.min(40, Math.log1p(views / 1000) * 8);
-  const newHeat = Math.min(100, person.heatScore + newsBoost);
-  if (newHeat - person.heatScore < 3) continue;
-
-  await db.insert(scoreSnapshots).values({
-    personId: person.personId,
-    calculatedAt: new Date(),
-    scoreModelVersion: `${person.scoreModelVersion}-wiki`,
-    popularityScore: person.popularityScore,
-    heatScore: newHeat,
-    coverageScore: person.coverageScore,
-    confidenceScore: person.confidenceScore,
-    sentimentScore: null,
-    controversyScore: null,
-    explanationJson: {
-      score_model_version: `${person.scoreModelVersion}-wiki`,
-      popularity_score: person.popularityScore,
-      heat_score: newHeat,
-      coverage_score: person.coverageScore,
-      wikipedia_views_1h: views,
-      heat_boost_from_views: newsBoost,
-      top_contributors: [
-        { signal: 'wikipedia_views_1h', impact: `+${newsBoost.toFixed(1)}`, reason: `${views.toLocaleString()} Wikipedia views in the last hour` },
-      ],
-    },
-  });
-  heatUpdates.push({ name: person.displayName, oldHeat: person.heatScore, newHeat });
-}
-
-if (heatUpdates.length > 0) {
-  console.log(`\n[heat] Updated ${heatUpdates.length} people from Wikipedia spikes:`);
-  for (const u of heatUpdates) {
-    console.log(`  ${u.name}: ${u.oldHeat.toFixed(1)} → ${u.newHeat.toFixed(1)}`);
-  }
-}
 
 // Auto-discover: add new people from daily Wikipedia trending
 const allArticlesForDiscovery = dailyArticles;
