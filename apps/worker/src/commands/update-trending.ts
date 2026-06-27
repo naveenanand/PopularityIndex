@@ -16,7 +16,7 @@
 import { findUp } from 'find-up';
 import { config } from 'dotenv';
 import { getDb, people, scoreSnapshots, cacheEntries } from '@pai/db';
-import { desc, eq, and, sql } from 'drizzle-orm';
+import { eq, and, sql } from 'drizzle-orm';
 
 const envPath = await findUp('.env');
 if (envPath) config({ path: envPath });
@@ -32,9 +32,9 @@ interface ScoredPerson {
   popularityScore: number;
   heatScore: number;
   coverageScore: number;
-  confidenceScore: number;
+  confidenceScore: number | null;
   scoreModelVersion: string;
-  calculatedAt: Date;
+  calculatedAt: Date | null;
 }
 
 interface WikipediaTopArticle {
@@ -147,6 +147,9 @@ const latestScores = db
   .groupBy(scoreSnapshots.personId)
   .as('latest_scores');
 
+// LEFT JOIN so bulk-seeded people without score_snapshots still participate
+// in Wikipedia title matching. Scores default to 0 for unscored people —
+// liveHeat (computed from view count) is the real ranking signal for trending.
 const scoredPeople: ScoredPerson[] = await db
   .select({
     personId: people.id,
@@ -154,31 +157,30 @@ const scoredPeople: ScoredPerson[] = await db
     displayName: people.displayName,
     photoUrl: people.photoUrl,
     occupationSummary: people.occupationSummary,
-    popularityScore: scoreSnapshots.popularityScore,
-    heatScore: scoreSnapshots.heatScore,
-    coverageScore: scoreSnapshots.coverageScore,
-    confidenceScore: scoreSnapshots.confidenceScore,
-    scoreModelVersion: scoreSnapshots.scoreModelVersion,
-    calculatedAt: scoreSnapshots.calculatedAt,
+    popularityScore: sql<number>`COALESCE(${scoreSnapshots.popularityScore}, 0)`,
+    heatScore:        sql<number>`COALESCE(${scoreSnapshots.heatScore}, 0)`,
+    coverageScore:    sql<number>`COALESCE(${scoreSnapshots.coverageScore}, 0)`,
+    confidenceScore:  scoreSnapshots.confidenceScore,
+    scoreModelVersion: sql<string>`COALESCE(${scoreSnapshots.scoreModelVersion}, 'unscored')`,
+    calculatedAt:     scoreSnapshots.calculatedAt,
   })
   .from(people)
-  .innerJoin(latestScores, eq(latestScores.personId, people.id))
-  .innerJoin(
+  .leftJoin(latestScores, eq(latestScores.personId, people.id))
+  .leftJoin(
     scoreSnapshots,
     and(
       eq(scoreSnapshots.personId, people.id),
       eq(scoreSnapshots.calculatedAt, sql`${latestScores.maxCalcAt}`),
     ),
-  )
-  .orderBy(desc(scoreSnapshots.popularityScore))
-  .limit(200);
+  );
 
 if (scoredPeople.length === 0) {
-  console.log('No scored people found. Run `pnpm score:calculate` first.');
+  console.log('No people found. Run `pnpm db:seed` or `pnpm bulk-seed` first.');
   process.exit(0);
 }
 
-console.log(`Found ${scoredPeople.length} scored people.`);
+const scoredCount = scoredPeople.filter(p => p.scoreModelVersion !== 'unscored').length;
+console.log(`Found ${scoredPeople.length} people (${scoredCount} scored, ${scoredPeople.length - scoredCount} unscored stubs).`);
 
 // Build a lookup: wikipedia_title → ScoredPerson
 // Wikipedia titles use underscores; we normalize display names to match.
