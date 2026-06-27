@@ -58,7 +58,7 @@ export function PersonCard({ person, size = 'md' }: Props) {
       </div>
 
       <div className={`absolute top-2 right-2 bg-black/60 backdrop-blur-sm text-[10px] font-bold px-1.5 py-0.5 rounded ${person.primaryColor}`}>
-        {Math.round(person.primaryScore)}
+        {person.primaryScoreDisplay ?? Math.round(person.primaryScore)}
       </div>
 
       <div className="absolute bottom-0 left-0 right-0 p-3">

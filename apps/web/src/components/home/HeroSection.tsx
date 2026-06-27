@@ -43,7 +43,7 @@ export function HeroSection({ person, rankLabel }: Props) {
 
         <div className="flex items-center gap-3 mb-6 flex-wrap">
           <div className="flex items-center gap-1.5 bg-white/10 backdrop-blur-sm rounded-full px-3 py-1.5">
-            <span className={`text-sm font-bold ${person.primaryColor}`}>{Math.round(person.primaryScore)}</span>
+            <span className={`text-sm font-bold ${person.primaryColor}`}>{person.primaryScoreDisplay ?? Math.round(person.primaryScore)}</span>
             <span className="text-zinc-400 text-xs">{person.primaryLabel}</span>
           </div>
           {person.secondaryScore !== undefined && (
