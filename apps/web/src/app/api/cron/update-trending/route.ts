@@ -295,12 +295,12 @@ export async function GET(request: Request) {
       personNewsMap.set(qid, existing);
     }
 
+    const totalArticles = unique.length;
+
     const trending = scoredPeople
       .filter(p => (countMap.get(p.wikidataQid)?.length ?? 0) >= 2)
       .map(p => {
         const articles = countMap.get(p.wikidataQid)!;
-        // liveHeat derived from article count — changes every cron run.
-        // Mild popularity tiebreak (log/20) only used for secondary sort within ties.
         const liveHeat = computeLiveHeat(timespan, articles.length);
         const scoreBoost = 1 + Math.log1p(p.popularityScore) / 20;
         return {
@@ -324,6 +324,15 @@ export async function GET(request: Request) {
       .sort((a, b) => b.liveHeat - a.liveHeat || b.trendingScore - a.trendingScore)
       .slice(0, 50)
       .map((e, i) => ({ ...e, rank: i + 1 }));
+
+    // Don't overwrite existing cache with empty results — GDELT is rate-limited
+    // from Vercel IPs when queried too frequently. If GDELT returned 0 articles
+    // the worker's Wikipedia-based data (written every 15 min) is fresher anyway.
+    if (totalArticles === 0) {
+      console.log(`[${timespan}] GDELT returned 0 articles — skipping cache write to preserve existing data`);
+      results[timespan] = 0;
+      continue;
+    }
 
     await conn
       .insert(cacheEntries)
