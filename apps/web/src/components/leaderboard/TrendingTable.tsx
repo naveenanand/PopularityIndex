@@ -26,9 +26,8 @@ const PERIOD_LABEL: Record<string, string> = {
   '30d': 'last 30 days',
 };
 
-// 1h uses Wikipedia page views; 24h/30d use news article counts
 const ACTIVITY_LABEL: Record<string, string> = {
-  '1h':  'Wikipedia Views',
+  '1h':  'News Articles',
   '24h': 'News Articles',
   '30d': 'News Articles',
 };
@@ -110,7 +109,7 @@ export function TrendingTable({ entries, timespan }: Props) {
         </tbody>
       </table>
       <p className="text-[10px] text-zinc-700 px-5 py-3">
-        Source: {timespan === '1h' ? 'Wikipedia hourly page views' : 'GDELT news index'} · {active.length} people trending in {PERIOD_LABEL[timespan]}
+        Source: {timespan === '1h' ? 'Google News RSS (last 75 min)' : 'GDELT news index'} · {active.length} people trending in {PERIOD_LABEL[timespan]}
       </p>
     </div>
   );
